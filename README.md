@@ -1,0 +1,182 @@
+# IPAFFS Release Explorer
+
+A read-only Node app that reconstructs release history from **existing**
+ADO runs, current run-page state, timelines, selected logs and Environment records. It needs no pipeline
+changes, database, GitHub API access or Kubernetes access.
+
+This standalone repository owns the app, its container, the ADO pipeline and its
+Helm chart. The new pipeline deploys this app only; existing IPAFFS pipelines
+remain its read-only data sources. See [DEV deployment](deploy/README.md) for setup.
+
+## Try it locally
+
+Requirements: Node 24+ and the Azure CLI, signed into an account with read access
+to your ADO project. The app has no package dependencies to install.
+
+Copy `.env.example` to `.env` and replace the example organisation, project and
+four pipeline IDs with your values. The example IDs are synthetic. Actual
+environment configuration stays outside this public repository.
+
+```sh
+az login
+npm start
+```
+
+Open <http://127.0.0.1:4317>. If you already have a working Azure CLI session,
+skip the login step. Tokens stay in server memory and are never returned to the
+browser. The server only sends GET requests to ADO; there are no queue, deploy,
+approve, tag, configuration-write or other mutation routes.
+
+The page initially reads live ADO data. A connection problem stays an error;
+sample data is available only through the explicit **Explore sample data** action.
+No live log files or credentials are saved in the application directory.
+
+## Data loading and refresh
+
+The browser requests dashboard JSON from the Node server. The server reads ADO,
+interprets the pipeline evidence and holds credentials and cached responses in
+memory. The browser renders those results; it does not contact ADO or receive
+credentials.
+
+Live data refreshes automatically every 3 minutes while the page is visible.
+Automatic refresh pauses in a hidden tab and catches up when the page becomes
+visible if a refresh is due. Requests do not overlap. Sample data does not
+refresh automatically.
+
+Automatic refresh uses the normal dashboard endpoint and its 90-second server
+cache. The **Refresh** button remains available to request a new scan immediately.
+Individual run evidence is accessible through environment and candidate details.
+
+## What existing data can tell us
+
+| Information | Existing evidence | Limit |
+| --- | --- | --- |
+| Last recorded deployment in TST/PRE/PRD | Per-environment deployment jobs/stages in the release timeline | A successful pipeline operation is not live cluster health. |
+| DEV namespaces deployed by these pipelines | The namespace resolver's `Using namespace:` log line | Deleted or expired logs leave the namespace unknown; this is not a live inventory of namespaces. |
+| Release candidates and effective manifest commit | Successful Create Release task logs | Tags absent from retained pipeline history cannot be enumerated without another source. |
+| Approvals and progress | Native stage results, including incomplete release runs | Overall run status is not the result of every environment. |
+| Linked QA result | Child run ID in the existing QA trigger log, then the child's current ADO result | The request does not record the exact manifest revision tested. |
+| Failures and reruns | Timeline outcomes and attempts | Older attempts may not be retained; uncertainty is shown rather than guessed. |
+
+Each result includes an ADO link for inspection. The dashboard keeps the last
+successful recorded deployment separate from the latest attempt. An older
+version deployed later (rollback) can be the last success. No claim is made that
+a prior version still runs after a failed deployment or an out-of-band change.
+
+Environment histories may also contain unrelated infrastructure deployments.
+The app uses the configured IPAFFS pipeline identities and their timelines,
+without treating a Grafana or other infrastructure deployment as an application
+release.
+
+## Candidate progress
+
+Each release candidate shows its progress through DEV, TST, PRE and PRD. The
+latest patch is visible while a release series is collapsed; expanding the
+series shows progress for every recorded patch. Select an environment to inspect
+the matching deployment or approval evidence.
+
+TST/PRE/PRD require both the candidate's exact Git tag and manifest commit to
+match a release run. Two tags pointing at the same commit do not inherit each
+other's progress. DEV deployments use branch sources, so DEV matches the exact
+manifest commit and a recorded namespace; its label is **Commit deployed**.
+
+Progress distinguishes completed deployments, active deployments, approvals,
+failures and missing evidence. A later failed attempt does not erase an earlier
+successful deployment from the details. **No record** means none was found in
+the bounded history scan, not that the candidate has never been deployed.
+
+Abandoned and canceled runs are ignored when reading candidate creation logs
+and calculating candidate progress. A candidate is hidden when every matching
+release run in
+the scan is abandoned. A new tag with no deployment run yet, or a candidate
+with an active, successful or failed non-abandoned attempt, stays visible.
+Matching uses the exact tag and commit, so abandoning another tag or revision
+does not hide the candidate. Canceled runs and their actual deployment history
+remain available in the environment overview and its evidence details.
+
+ADO can mark a completed run **Abandoned** while the public Build API continues
+to return its original successful result. For completed runs, the app also
+reads the current numeric status from the run page's JSON data provider
+([`BuildStatus.Abandoned = 16`](https://learn.microsoft.com/en-us/javascript/api/azure-devops-extension-api/buildstatus)). Only the verified run ID, pipeline ID and status
+are retained in memory; page HTML is never returned to the browser or saved.
+Status checks are cached against the build's last-changed timestamp.
+
+This page data provider is not a stable public REST contract. If the page
+format changes or the status cannot be read, the app reports a coverage warning
+and does not use that run as candidate evidence. It does not treat a missing
+status or missing deployment history as abandonment.
+
+## Configuration and scope
+
+The server requires an explicit organisation, project and four pipeline IDs:
+
+- `ADO_ORGANIZATION` and `ADO_PROJECT`
+- `ADO_DEV_PIPELINE_ID`
+- `ADO_CREATE_RELEASE_PIPELINE_ID`
+- `ADO_RELEASE_PIPELINE_ID`
+- `ADO_QA_PIPELINE_ID`
+
+Copy `.env.example` to `.env` to configure these values, the port or scan
+size. The default reads up to 20 recent runs **per pipeline**, plus explicitly
+linked QA runs. The UI states its scan limit; it does not claim to represent all
+retained history. Increase `ADO_RUNS_PER_PIPELINE` up to 100 for a broader scan.
+Responses are cached in memory for 90 seconds; Refresh requests a new scan.
+
+Authentication preference is `ADO_PAT`, then `ADO_BEARER_TOKEN`, then AKS workload
+identity when configured, otherwise the existing Azure CLI session. Supply secrets only through the local environment
+or an ignored `.env` file. A read-only credential limits access independently of
+the app's GET-only implementation. The PAT needs Build read and Environment read
+access; if Environment history is unavailable, timeline results remain usable.
+
+Workload identity exchanges the AKS projected service-account token with Microsoft
+Entra for an ADO access token. This authentication exchange is an outbound POST;
+ADO history requests remain GET-only. Tokens are renewed and held in memory, and
+the projected token file is reread on renewal. Incomplete or failing workload
+identity configuration does not fall back to a different account.
+
+The local server binds to `127.0.0.1`; the container binds to `0.0.0.0`. Requests
+must match an explicit `ALLOWED_HOSTS` list (hostnames including any port). The
+chart supplies local and service DNS addresses. This host check is not user
+authentication. The default AKS service is private and reached through authorised
+Kubernetes port forwarding. A shared browser URL needs your approved ingress and
+user sign-in layer before it is enabled.
+
+## Container option
+
+The included container uses a runtime-supplied token; it does not contain Azure
+CLI credentials. To try it with an existing read-only `ADO_PAT` environment value:
+
+```sh
+docker build -t ipaffs-release-explorer .
+docker run --rm -p 127.0.0.1:4317:4317 --env-file .env --env ADO_PAT ipaffs-release-explorer
+```
+
+The image runs as the non-root `node` user. The Helm deployment also uses a
+read-only root filesystem, resource limits and process health probes. It needs no
+persistent volume or database. The container contains no Azure CLI or credentials;
+the AKS workload identity webhook supplies its runtime identity.
+
+The [pipeline](pipeline.yaml) tests the app, validates the chart, builds a
+Linux/amd64 image, pushes it to DEV ACR and deploys the resulting image digest to
+the dedicated `ipaffs-release-explorer` namespace. It is manually triggered during
+initial setup. Identity provisioning and ADO enrollment are described in the
+[deployment guide](deploy/README.md).
+
+## Tests
+
+```sh
+npm test
+```
+
+Tests cover interpretation of pipeline evidence, false-success cases, read-only
+HTTP behaviour, host validation, workload token exchange/rotation, credential redaction and pagination. The
+application uses Node's standard library for both the server and tests.
+
+## API references
+
+- [ADO builds and source refs](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/list?view=azure-devops-rest-7.1)
+- [Timeline results and attempts](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/timeline/get?view=azure-devops-rest-7.1)
+- [Environment deployment records](https://learn.microsoft.com/en-us/rest/api/azure/devops/distributedtask/environmentdeployment-records/list?view=azure-devops-rest-7.1)
+- [Azure CLI Entra tokens for ADO](https://learn.microsoft.com/en-us/azure/devops/cli/entra-tokens?view=azure-devops)
+- [ADO service principals and managed identities](https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/service-principal-managed-identity?view=azure-devops)
+- [AKS workload identity setup](https://learn.microsoft.com/en-us/azure/aks/workload-identity-deploy-cluster)

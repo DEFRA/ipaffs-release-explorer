@@ -1,0 +1,39 @@
+replicaCount: 1
+
+image:
+  repository: ""
+  # Deployment always uses the digest produced by the build stage.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  name: ipaffs-release-explorer
+
+workloadIdentity:
+  clientId: ""
+  tenantId: ""
+
+ado:
+  # Required at deployment time; no organisation or pipeline identifiers are public defaults.
+  organization: ""
+  project: ""
+  pipelines:
+    dev: ""
+    createRelease: ""
+    release: ""
+    qa: ""
+  runsPerPipeline: 20
+  cacheSeconds: 90
+
+# Explicit host headers only. The chart also permits its own Service DNS names.
+allowedHosts:
+  - 127.0.0.1:4317
+  - localhost:4317
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 384Mi

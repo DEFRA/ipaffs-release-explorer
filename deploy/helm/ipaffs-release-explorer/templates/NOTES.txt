@@ -1,0 +1,7 @@
+IPAFFS Release Explorer is available inside namespace {{ .Release.Namespace }}.
+
+To open it through your authenticated DEV cluster access:
+  kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "explorer.name" . }} 4317:4317
+  Open http://127.0.0.1:4317
+
+The Service is private (ClusterIP); this chart creates no public ingress.

@@ -1,0 +1,74 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["replicaCount", "image", "serviceAccount", "workloadIdentity", "ado", "allowedHosts", "resources"],
+  "properties": {
+    "replicaCount": {"type": "integer", "minimum": 1, "maximum": 3},
+    "image": {
+      "type": "object",
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": {"type": "string", "pattern": "^[a-z0-9][a-z0-9.:-]*/[a-z0-9][a-z0-9._/-]*$"},
+        "digest": {"type": "string", "pattern": "^sha256:[0-9a-f]{64}$"},
+        "pullPolicy": {"type": "string", "enum": ["IfNotPresent", "Always"]}
+      },
+      "additionalProperties": false
+    },
+    "serviceAccount": {
+      "type": "object",
+      "required": ["name"],
+      "properties": {"name": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$", "maxLength": 63}},
+      "additionalProperties": false
+    },
+    "workloadIdentity": {
+      "type": "object",
+      "required": ["clientId", "tenantId"],
+      "properties": {
+        "clientId": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},
+        "tenantId": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"}
+      },
+      "additionalProperties": false
+    },
+    "ado": {
+      "type": "object",
+      "required": ["organization", "project", "pipelines", "runsPerPipeline", "cacheSeconds"],
+      "properties": {
+        "organization": {"type": "string", "pattern": "^https://dev\\.azure\\.com/[A-Za-z0-9_-]+$"},
+        "project": {"type": "string", "minLength": 1},
+        "pipelines": {
+          "type": "object",
+          "required": ["dev", "createRelease", "release", "qa"],
+          "properties": {
+            "dev": {"type": "integer", "minimum": 1},
+            "createRelease": {"type": "integer", "minimum": 1},
+            "release": {"type": "integer", "minimum": 1},
+            "qa": {"type": "integer", "minimum": 1}
+          },
+          "additionalProperties": false
+        },
+        "runsPerPipeline": {"type": "integer", "minimum": 1, "maximum": 100},
+        "cacheSeconds": {"type": "integer", "minimum": 10, "maximum": 3600}
+      },
+      "additionalProperties": false
+    },
+    "allowedHosts": {
+      "type": "array",
+      "minItems": 2,
+      "uniqueItems": true,
+      "items": {"type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9.-]*(:[0-9]{1,5})?$"},
+      "allOf": [
+        {"contains": {"const": "127.0.0.1:4317"}},
+        {"contains": {"const": "localhost:4317"}}
+      ]
+    },
+    "resources": {
+      "type": "object",
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {"type": "object", "required": ["cpu", "memory"]},
+        "limits": {"type": "object", "required": ["cpu", "memory"]}
+      }
+    }
+  },
+  "additionalProperties": false
+}
