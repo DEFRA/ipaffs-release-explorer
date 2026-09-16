@@ -162,7 +162,9 @@ PR checks run on an isolated Microsoft-hosted agent with synthetic configuration
 After a merge or push to `main`, the pipeline repeats validation, pushes an image
 to DEV ACR and deploys its digest into the dedicated `ipaffs-release-explorer`
 namespace. Azure configuration and deployment stages are included only for `main`
-runs. Identity provisioning and ADO enrollment are described in the
+runs. Each DEV deployment creates or updates the app identity and AKS federation,
+then passes its IDs directly to Helm. ADO enrollment is a separate one-off step
+described in the
 [deployment guide](deploy/README.md).
 
 ## Tests
@@ -171,7 +173,8 @@ runs. Identity provisioning and ADO enrollment are described in the
 npm test
 ```
 
-Tests cover interpretation of pipeline evidence, false-success cases, read-only
+The full suite also needs Bash and jq for the identity provisioning checks, which
+use a stub Azure CLI and make no cloud calls. Tests cover interpretation of pipeline evidence, false-success cases, read-only
 HTTP behaviour, host validation, workload token exchange/rotation, credential redaction and pagination. The
 application uses Node's standard library for both the server and tests.
 

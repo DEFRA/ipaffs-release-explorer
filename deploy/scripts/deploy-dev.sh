@@ -115,8 +115,15 @@ helm upgrade --install ipaffs-release-explorer "${charts[0]}" \
 # Emit only status/counts, never tokens, upstream responses or pipeline log contents.
 # shellcheck disable=SC2016
 kubectl --namespace "$NAMESPACE" exec deployment/ipaffs-release-explorer -- node --input-type=module -e '
-  const response = await fetch("http://127.0.0.1:4317/api/dashboard", {signal: AbortSignal.timeout(240000)});
-  const dashboard = await response.json();
+  // A newly created federation can take time to become usable at the token endpoint.
+  let response, dashboard;
+  for (let attempt = 0; attempt < 6; attempt++) {
+    response = await fetch("http://127.0.0.1:4317/api/dashboard", {signal: AbortSignal.timeout(240000)});
+    dashboard = await response.json();
+    if (dashboard.error?.code !== "workload_identity_unavailable" || attempt === 5) break;
+    console.log("Waiting briefly for workload identity token exchange to become available.");
+    await new Promise(resolve => setTimeout(resolve, 10000));
+  }
   if (!response.ok || dashboard.mode !== "live" || dashboard.error) {
     console.error("ADO read smoke check failed. Verify the managed identity has access to the ADO project and pipelines.");
     process.exit(1);

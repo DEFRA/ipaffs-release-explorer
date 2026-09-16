@@ -51,6 +51,8 @@ stages:
               helmVersionToInstall: $(helmVersion)
           - bash: bash deploy/scripts/validate-chart.sh
             displayName: Validate Helm chart
+          - bash: az bicep build --file infrastructure/workload-identity.bicep --outfile "$(Agent.TempDirectory)/release-explorer-identity.json"
+            displayName: Validate identity template
           - bash: bash deploy/scripts/validate-image.sh
             displayName: Build and smoke-test container
             env:
@@ -120,15 +122,31 @@ stages:
                       inputs:
                         helmVersionToInstall: $(helmVersion)
                     - task: AzureCLI@2
+                      name: provisionIdentity
+                      displayName: Create or update app identity and federation
+                      env:
+                        AKS_NAME: $(kubernetesCluster)
+                        AKS_RESOURCE_GROUP: $(resourceGroupName)
+                        NAMESPACE: ${{ parameters.namespace }}
+                        IDENTITY_DEPLOYMENT_NAME: release-explorer-$(Build.BuildId)
+                      inputs:
+                        azureSubscription: $(serviceConnection)
+                        scriptType: bash
+                        scriptLocation: scriptPath
+                        scriptPath: deploy/scripts/bootstrap-identity.sh
+                        arguments: --apply --pipeline
+                        workingDirectory: $(Build.SourcesDirectory)
+                        visibleAzLogin: false
+                    - task: AzureCLI@2
                       displayName: Check identity and deploy to DEV AKS
                       env:
                         AKS_NAME: $(kubernetesCluster)
                         AKS_RESOURCE_GROUP: $(resourceGroupName)
                         ACR_NAME: $(acrName)
                         NAMESPACE: ${{ parameters.namespace }}
-                        IDENTITY_RESOURCE_ID: $(RELEASE_EXPLORER_IDENTITY_RESOURCE_ID)
-                        IDENTITY_CLIENT_ID: $(RELEASE_EXPLORER_IDENTITY_CLIENT_ID)
-                        IDENTITY_TENANT_ID: $(RELEASE_EXPLORER_IDENTITY_TENANT_ID)
+                        IDENTITY_RESOURCE_ID: $(provisionIdentity.identityResourceId)
+                        IDENTITY_CLIENT_ID: $(provisionIdentity.clientId)
+                        IDENTITY_TENANT_ID: $(provisionIdentity.tenantId)
                         ADO_ORGANIZATION: $(ADO_ORGANIZATION)
                         ADO_PROJECT: $(ADO_PROJECT)
                         ADO_DEV_PIPELINE_ID: $(ADO_DEV_PIPELINE_ID)

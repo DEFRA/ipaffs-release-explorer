@@ -1,14 +1,15 @@
 targetScope = 'resourceGroup'
 
+param namespace string = 'ipaffs-release-explorer'
+
 @description('Name of the dedicated identity used only by the release explorer.')
-param identityName string = 'ipaffs-release-explorer-dev'
+param identityName string = '${namespace}-dev'
 
 param location string = resourceGroup().location
 
 @description('OIDC issuer URL from the existing DEV AKS cluster, including its trailing slash.')
 param oidcIssuerUrl string
 
-param namespace string = 'ipaffs-release-explorer'
 param serviceAccountName string = 'ipaffs-release-explorer'
 
 resource identity 'Microsoft.ManagedIdentity/userAssignedIdentities@2024-11-30' = {
