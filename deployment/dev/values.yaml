@@ -1,6 +1,12 @@
 # DEV overrides. ADO configuration, registry digest and identity IDs come from ADO variables.
 replicaCount: 1
 
+ingress:
+  enabled: true
+  className: nginx
+  # The hostname comes from the ADO variable group. Reuse the controller's TLS certificate.
+  tlsSecretName: ""
+
 ado:
   runsPerPipeline: 20
   cacheSeconds: 90

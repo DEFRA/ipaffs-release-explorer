@@ -4,9 +4,9 @@ set -euo pipefail
 # shellcheck disable=SC2016
 for name in AKS_NAME AKS_RESOURCE_GROUP ACR_NAME NAMESPACE IDENTITY_RESOURCE_ID IDENTITY_CLIENT_ID IDENTITY_TENANT_ID \
   ADO_ORGANIZATION ADO_PROJECT ADO_DEV_PIPELINE_ID ADO_CREATE_RELEASE_PIPELINE_ID ADO_RELEASE_PIPELINE_ID ADO_QA_PIPELINE_ID \
-  ARTIFACT_DIR DEPLOY_TEMP_DIR; do
+  INGRESS_HOST ARTIFACT_DIR DEPLOY_TEMP_DIR; do
   if [[ -z "${!name:-}" || "${!name}" == *'$('* ]]; then
-    echo "Required pipeline variable ${name} is missing. Complete identity setup before deploying." >&2
+    echo "Required pipeline variable ${name} is missing. Complete DEV configuration before deploying." >&2
     exit 1
   fi
 done
@@ -18,6 +18,10 @@ for name in ADO_DEV_PIPELINE_ID ADO_CREATE_RELEASE_PIPELINE_ID ADO_RELEASE_PIPEL
 done
 if [[ ! "$ADO_ORGANIZATION" =~ ^https://dev\.azure\.com/[A-Za-z0-9_-]+$ ]]; then
   echo 'ADO_ORGANIZATION must be an HTTPS dev.azure.com organisation URL.' >&2
+  exit 1
+fi
+if [[ ${#INGRESS_HOST} -gt 253 || "$INGRESS_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ || ! "$INGRESS_HOST" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$ ]]; then
+  echo 'INGRESS_HOST must be a lowercase DNS hostname without a scheme, port or path.' >&2
   exit 1
 fi
 if [[ ! "$NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ || ${#NAMESPACE} -gt 63 ]]; then
@@ -32,7 +36,7 @@ mkdir -p "$DEPLOY_TEMP_DIR/bin"
 chmod 700 "$DEPLOY_TEMP_DIR"
 export KUBECONFIG="$DEPLOY_TEMP_DIR/kubeconfig"
 export PATH="$DEPLOY_TEMP_DIR/bin:$PATH"
-trap 'rm -f "$KUBECONFIG" "$DEPLOY_TEMP_DIR/runtime-values.json"' EXIT
+trap 'rm -f "$KUBECONFIG" "$DEPLOY_TEMP_DIR/runtime-values.json" "$DEPLOY_TEMP_DIR/ingress-health.json"' EXIT
 
 az aks show --name "$AKS_NAME" --resource-group "$AKS_RESOURCE_GROUP" --output json > "$DEPLOY_TEMP_DIR/aks.json"
 if ! jq -e '.oidcIssuerProfile.enabled == true and .securityProfile.workloadIdentity.enabled == true' "$DEPLOY_TEMP_DIR/aks.json" >/dev/null; then
@@ -99,9 +103,11 @@ charts=("$ARTIFACT_DIR"/ipaffs-release-explorer-*.tgz)
 jq -n --arg repository "$repository" --arg digest "$digest" \
   --arg clientId "$IDENTITY_CLIENT_ID" --arg tenantId "$IDENTITY_TENANT_ID" \
   --arg organization "$ADO_ORGANIZATION" --arg project "$ADO_PROJECT" \
+  --arg ingressHost "$INGRESS_HOST" \
   --argjson dev "$ADO_DEV_PIPELINE_ID" --argjson createRelease "$ADO_CREATE_RELEASE_PIPELINE_ID" \
   --argjson release "$ADO_RELEASE_PIPELINE_ID" --argjson qa "$ADO_QA_PIPELINE_ID" \
   '{image:{repository:$repository,digest:$digest}, workloadIdentity:{clientId:$clientId,tenantId:$tenantId},
+    ingress:{host:$ingressHost},
     ado:{organization:$organization,project:$project,pipelines:{dev:$dev,createRelease:$createRelease,release:$release,qa:$qa}}}' \
   > "$DEPLOY_TEMP_DIR/runtime-values.json"
 chmod 600 "$DEPLOY_TEMP_DIR/runtime-values.json"
@@ -110,6 +116,17 @@ helm upgrade --install ipaffs-release-explorer "${charts[0]}" \
   --values "$ARTIFACT_DIR/dev-values.yaml" \
   --values "$DEPLOY_TEMP_DIR/runtime-values.json" \
   --atomic --wait --timeout 10m --history-max 10
+
+# Verify DNS, certificate trust/hostname, ingress routing and the app Host allowlist.
+# Use normal TLS validation; a mismatched controller certificate must fail the run.
+curl --fail --silent --show-error --connect-timeout 10 --max-time 15 \
+  --retry 6 --retry-delay 5 --retry-all-errors \
+  --output "$DEPLOY_TEMP_DIR/ingress-health.json" "https://${INGRESS_HOST}/healthz"
+if ! jq -e '.status == "ok" and .readOnly == true' "$DEPLOY_TEMP_DIR/ingress-health.json" >/dev/null; then
+  echo 'Ingress health check did not reach the release explorer.' >&2
+  exit 1
+fi
+echo 'Ingress HTTPS check passed.'
 
 # A ready process is not enough: verify that the pod can read ADO using its identity.
 # Emit only status/counts, never tokens, upstream responses or pipeline log contents.
@@ -142,4 +159,4 @@ kubectl --namespace "$NAMESPACE" exec deployment/ipaffs-release-explorer -- node
   console.log("ADO read smoke check passed; dashboard is live.");
 '
 echo "Deployed ${repository}@${digest} in namespace ${NAMESPACE}."
-echo "Access: kubectl --namespace ${NAMESPACE} port-forward service/ipaffs-release-explorer 4317:4317"
+echo "Access: https://${INGRESS_HOST}"

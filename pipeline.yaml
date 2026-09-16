@@ -153,6 +153,7 @@ stages:
                         ADO_CREATE_RELEASE_PIPELINE_ID: $(ADO_CREATE_RELEASE_PIPELINE_ID)
                         ADO_RELEASE_PIPELINE_ID: $(ADO_RELEASE_PIPELINE_ID)
                         ADO_QA_PIPELINE_ID: $(ADO_QA_PIPELINE_ID)
+                        INGRESS_HOST: $(ingressHost)
                         ARTIFACT_DIR: $(Pipeline.Workspace)/release-explorer
                         DEPLOY_TEMP_DIR: $(Agent.TempDirectory)/release-explorer-$(Build.BuildId)
                       inputs:

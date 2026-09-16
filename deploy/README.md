@@ -29,6 +29,7 @@ public repository. Populate it from your existing DEV configuration:
 | `resourceGroupName` | DEV AKS resource group |
 | `kubernetesCluster` | DEV AKS name |
 | `acrName` | Existing DEV ACR name |
+| `ingressHost` | Full internal DNS hostname covered by the NGINX controller's certificate |
 | `ADO_ORGANIZATION` | `https://dev.azure.com/<your-organisation>` |
 | `ADO_PROJECT` | Project containing IPAFFS pipeline history |
 | `ADO_DEV_PIPELINE_ID` | DEV deployment pipeline ID |
@@ -44,7 +45,7 @@ The pipeline uses ADO deployment environment `DEV` and image repository
 through a temporary values file; the published chart contains no environment IDs.
 
 Use an agent in that pool which can reach the private AKS API and ACR, and has
-Docker, Azure CLI, Bash and jq. Publishing and deployment use this private pool;
+Docker, Azure CLI, Bash, jq and curl. Publishing and deployment use this private pool;
 validation uses a Microsoft-hosted `ubuntu-24.04` agent and needs hosted parallel
 job capacity. The pipeline installs Node, Helm, kubectl and
 kubelogin. Authorise the new pipeline to use the variable group, agent pool,
@@ -57,7 +58,7 @@ There are three separate identities involved:
   Kubernetes permissions to create the new namespace and manage its Helm resources.
   It also needs permission to create/update the app managed identity and federated
   credential, run resource-group ARM deployments, read the AKS configuration, and
-  execute the post-deployment check in the pod (`pods/exec`). The namespace-scoped
+  create/update the app Ingress and execute the post-deployment check in the pod (`pods/exec`). The namespace-scoped
   identity receives no Azure resource roles from this template.
 - **AKS kubelet identity:** pulls the image from ACR. It needs `AcrPull`, or the
   appropriate repository-reader role if the registry uses repository ABAC.
@@ -138,7 +139,8 @@ access to it must be verified on the first deployment. The dashboard reports
 missing state rather than inventing candidates if this read fails.
 
 Allow pod HTTPS egress and DNS for `login.microsoftonline.com` and `dev.azure.com`.
-The deployment agent separately needs access to ACR, AKS and tool download hosts.
+The deployment agent separately needs access to ACR, AKS, tool download hosts and
+the internal ingress hostname over HTTPS.
 Check any inherited namespace or cluster network policy before the first run.
 
 ## 3. Register and run the ADO pipeline
@@ -186,29 +188,56 @@ overrides disabled. A run on `main`:
 4. Creates or updates the managed identity and federation and reads their IDs.
 5. Verifies cluster identity settings and federation, then installs/upgrades the
    chart in the dedicated namespace with a ten-minute readiness timeout.
-6. Checks live ADO reads from the running pod. A freshly provisioned identity gets
+6. Checks the ingress URL with certificate verification, then checks live ADO reads
+   from the running pod. A freshly provisioned identity gets
    a bounded retry for token-exchange propagation. An authentication or permissions
    failure must be resolved before treating the deployment as ready for use.
 
-`helm --atomic` rolls back a failed Helm upgrade. A later ADO smoke-check failure
+`helm --atomic` rolls back a failed Helm upgrade. A later ingress or ADO smoke-check failure
 fails the pipeline but leaves the installed revision available for diagnosis;
 it does not automatically roll back that revision.
 
 ## 4. Open it
 
-With DEV Kubernetes access that permits pod port forwarding (`pods/portforward`):
+Open `https://<ingressHost>` from a machine with access to the DEV network. The
+pipeline prints the actual URL after deployment. Normal use requires no local
+process or Kubernetes port forwarding.
+
+The DEV values enable an Ingress on the existing `nginx` class. It routes `/` to
+the app's ClusterIP service, redirects HTTP to HTTPS, and permits the exact browser
+hostname (including an explicit `:443`) in the app's Host allowlist. The 300-second
+NGINX read timeout accommodates the first ADO history scan.
+
+Supply the real hostname only through `ingressHost` in `ReleaseExplorerDEV`; keep
+it out of this public repository. Point that hostname at the existing internal
+load balancer, or use a name already covered by the environment's wildcard DNS.
+The chart does not create DNS records or a new ingress controller.
+
+By default `ingress.tlsSecretName` is empty: the Ingress declares TLS hosts but
+omits `secretName`, allowing NGINX to use its configured default certificate. This
+avoids copying certificate material into the app namespace. The shared certificate
+must cover the chosen hostname and be trusted by browsers and the deployment
+agent. If a different certificate is needed, set `ingress.tlsSecretName` to an
+existing TLS Secret in the app namespace. The chart does not create that Secret.
+See the [NGINX default certificate documentation](https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/tls.md#default-ssl-certificate).
+
+The deployment checks HTTPS `/healthz` from the DEV agent with normal certificate
+verification. DNS, certificate or routing failures fail the run; this does not
+roll back a Helm installation that already succeeded.
+
+Access relies on the DEV network boundary. NGINX provides routing and TLS, not a
+user sign-in: anyone who can reach this URL can view the dashboard's ADO data. The
+app managed identity authenticates backend ADO requests only. Keep the ingress on
+the internal controller; broader exposure needs a separate access-control design.
+
+Port forwarding remains an optional diagnostic fallback for users with DEV
+Kubernetes access permitting `pods/portforward`:
 
 ```sh
 kubectl --namespace ipaffs-release-explorer port-forward service/ipaffs-release-explorer 4317:4317
 ```
 
-Open <http://127.0.0.1:4317>. Stop the local Node app first if it already uses that
-port. The chart creates a ClusterIP service; it does not create a public endpoint
-or ingress. Cluster users who can reach the service can see its ADO data.
-
-For a shared URL, add your approved internal ingress, TLS and user authentication,
-then include the exact browser host/port in the chart's additional allowed hosts.
-The backend workload identity authenticates to ADO; it does not sign browser users in.
+Open <http://127.0.0.1:4317>. Stop the local Node app first if it already uses that port.
 
 ## Local checks
 

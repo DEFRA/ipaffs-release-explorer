@@ -30,6 +30,13 @@ allowedHosts:
   - 127.0.0.1:4317
   - localhost:4317
 
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  # Leave empty to use the ingress controller's default TLS certificate.
+  tlsSecretName: ""
+
 resources:
   requests:
     cpu: 100m

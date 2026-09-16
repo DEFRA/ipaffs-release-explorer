@@ -136,10 +136,12 @@ identity configuration does not fall back to a different account.
 
 The local server binds to `127.0.0.1`; the container binds to `0.0.0.0`. Requests
 must match an explicit `ALLOWED_HOSTS` list (hostnames including any port). The
-chart supplies local and service DNS addresses. This host check is not user
-authentication. The default AKS service is private and reached through authorised
-Kubernetes port forwarding. A shared browser URL needs your approved ingress and
-user sign-in layer before it is enabled.
+chart supplies local and service DNS addresses and the configured ingress hostname.
+This host check is not user authentication. DEV uses the existing internal NGINX
+ingress and its shared TLS certificate. Users open the configured HTTPS URL from
+the DEV network; port forwarding is optional for diagnostics. Access relies on that
+network boundary: anyone who can reach the URL can view the dashboard. There is no
+separate app sign-in, and the app's managed identity only authenticates its ADO calls.
 
 ## Container option
 

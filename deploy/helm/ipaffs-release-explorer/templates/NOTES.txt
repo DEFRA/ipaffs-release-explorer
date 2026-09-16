@@ -1,7 +1,12 @@
 IPAFFS Release Explorer is available inside namespace {{ .Release.Namespace }}.
 
+{{ if .Values.ingress.enabled -}}
+Open https://{{ .Values.ingress.host }} from a network that can reach the ingress controller.
+The hostname must resolve to the ingress controller, and its certificate must cover this hostname.
+{{ else -}}
 To open it through your authenticated DEV cluster access:
   kubectl --namespace {{ .Release.Namespace }} port-forward service/{{ include "explorer.name" . }} 4317:4317
   Open http://127.0.0.1:4317
 
-The Service is private (ClusterIP); this chart creates no public ingress.
+Ingress is disabled. The Service is private (ClusterIP).
+{{ end -}}

@@ -1,5 +1,9 @@
 {{- $name := include "explorer.name" . -}}
 {{- $serviceHosts := list (printf "%s:4317" $name) (printf "%s.%s.svc:4317" $name .Release.Namespace) (printf "%s.%s.svc.cluster.local:4317" $name .Release.Namespace) -}}
+{{- $ingressHosts := list -}}
+{{- if .Values.ingress.enabled -}}
+{{- $ingressHosts = list .Values.ingress.host (printf "%s:443" .Values.ingress.host) -}}
+{{- end -}}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -10,7 +14,7 @@ data:
   HOST: "0.0.0.0"
   PORT: "4317"
   NODE_ENV: production
-  ALLOWED_HOSTS: {{ concat .Values.allowedHosts $serviceHosts | uniq | join "," | quote }}
+  ALLOWED_HOSTS: {{ concat .Values.allowedHosts $serviceHosts $ingressHosts | uniq | join "," | quote }}
   ADO_ORGANIZATION: {{ .Values.ado.organization | quote }}
   ADO_PROJECT: {{ .Values.ado.project | quote }}
   ADO_DEV_PIPELINE_ID: {{ .Values.ado.pipelines.dev | quote }}
