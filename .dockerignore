@@ -1,0 +1,11 @@
+.env*
+node_modules
+test
+*.log
+.git
+deploy
+deployment
+infrastructure
+README.md
+pipeline.yaml
+.DS_Store

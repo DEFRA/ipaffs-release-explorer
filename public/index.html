@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Explore IPAFFS releases and deployment evidence from existing Azure DevOps pipeline history.">
+  <meta name="color-scheme" content="light">
+  <title>IPAFFS Release Explorer</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">I</span><span>IPAFFS <span class="brand-section">/ Release Explorer</span></span></div>
+    <span class="readonly"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M6 9V6a4 4 0 0 1 8 0v3M5 9h10v8H5z"/></svg>Read only</span>
+  </header>
+  <main id="main" class="workspace">
+    <div class="page-heading">
+      <div><div class="eyebrow">RELEASE OPERATIONS</div><h1>Release Explorer</h1><p class="subtitle">Deployment and release evidence from Azure DevOps.</p></div>
+      <div class="refresh-controls"><span id="mode-badge" class="badge neutral">Connecting</span><button id="refresh" class="button secondary"><svg aria-hidden="true" viewBox="0 0 20 20"><path d="M16 7a6.5 6.5 0 1 0 .3 5M16 3v4h-4"/></svg><span>Refresh</span></button></div>
+    </div>
+    <div id="source-bar" class="source-bar"><span id="source-label">Reading existing pipeline history</span><span id="fetched-at"></span><span id="auto-refresh-status">Auto-refresh every 3 minutes</span></div>
+    <div id="notice" class="notice" role="status" hidden></div>
+    <div id="error-panel" class="error-panel" role="alert" hidden>
+      <div class="error-symbol" aria-hidden="true">!</div><div><h2>We couldn’t read Azure DevOps</h2><p id="error-message"></p><p class="muted">The app needs access to read builds, logs and deployment history. Check the local connection settings, then try again.</p><div class="actions"><button id="retry" class="button primary">Try again</button><button id="sample" class="button secondary">Explore sample data</button></div></div>
+    </div>
+    <div id="loading" class="loading-panel" role="status"><span class="spinner" aria-hidden="true"></span><h2>Reading pipeline history</h2><p>Finding deployments, release tags and the evidence behind them.</p></div>
+    <div id="dashboard" hidden>
+      <div class="tabs" role="tablist" aria-label="Release explorer views">
+        <button id="tab-overview" role="tab" aria-selected="true" aria-controls="panel-overview" data-tab="overview">Overview</button>
+        <button id="tab-releases" role="tab" aria-selected="false" aria-controls="panel-releases" tabindex="-1" data-tab="releases">Release candidates <span id="release-count" class="count">0</span></button>
+      </div>
+      <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
+        <div class="section-heading"><div><h2>Environments</h2><p>Last successful deployment recorded by ADO. Cluster health is not observed.</p></div><span class="section-label">DEV → TST → PRE → PRD</span></div>
+        <div id="environment-grid" class="environment-grid"></div>
+        <section class="surface namespace-section"><div class="surface-heading"><div><h2>DEV namespaces</h2><p>Namespaces found in the pipeline runs scanned.</p></div><span id="namespace-count" class="badge neutral"></span></div><div id="namespace-table" class="table-wrap"></div></section>
+        <section class="surface evidence-section"><div class="surface-heading"><div><h2>What the data can tell us</h2><p>Coverage and limits of existing pipeline evidence.</p></div></div><div id="coverage" class="coverage-grid"></div><div id="warnings" class="warnings"></div></section>
+      </section>
+      <section id="panel-releases" role="tabpanel" aria-labelledby="tab-releases" hidden>
+        <div class="section-heading"><div><h2>Release candidates</h2><p>Recorded progress from DEV to PRD. Abandoned runs are ignored. Expand a series to inspect earlier patches; select an environment for its evidence.</p></div></div><div id="release-list" class="release-list"></div>
+      </section>
+      <footer class="page-footer"><span>Existing ADO records · No pipeline changes · No database</span><span id="scan-window"></span></footer>
+    </div>
+  </main>
+  <dialog id="detail-dialog" class="detail-dialog" aria-labelledby="detail-title">
+    <div class="drawer-header"><div><div id="detail-eyebrow" class="eyebrow">EVIDENCE</div><h2 id="detail-title">Run details</h2></div><button id="close-detail" class="icon-button" aria-label="Close details">×</button></div>
+    <div id="detail-content" class="drawer-content"></div>
+  </dialog>
+</body>
+</html>

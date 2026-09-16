@@ -1,0 +1,145 @@
+import { buildDashboard, parseQaRunEvidence } from './model.mjs';
+import { mapConcurrent } from './ado-client.mjs';
+
+const INTERESTING_LOG = /Resolve namespace|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline/i;
+
+export function createDashboardService(config, client) {
+  let cached;
+  let pending;
+  let lastDetails = new Map();
+  let lastBuilds = [];
+  let runStates = new Map();
+
+  async function load() {
+    const warnings = [];
+    const callsBefore = client.requests;
+    const lists = await Promise.all(Object.entries(config.pipelines).map(async ([kind, id]) => ({
+      kind,
+      ...(await client.list('build/builds', { definitions: id, queryOrder: 'queueTimeDescending' }, config.runsPerPipeline)),
+    })));
+    const builds = lists.flatMap(list => list.items.map(build => ({ ...build, _kind: list.kind })));
+    const relevant = builds.filter(build => build.definition.id !== config.pipelines.qa);
+    const details = new Map();
+    const nextRunStates = new Map();
+    await mapConcurrent(relevant, 6, async build => {
+      if (build.status === 'completed' && !['canceled', 'cancelled', 'abandoned'].includes(String(build.result || '').toLowerCase())) {
+        const key = `${build.id}:${build.definition.id}`;
+        const changedAt = typeof build.lastChangedDate === 'string' && Number.isFinite(Date.parse(build.lastChangedDate)) ? build.lastChangedDate : null;
+        try {
+          const prior = runStates.get(key);
+          const state = changedAt && prior?.changedAt === changedAt ? prior.state : await client.getRunStatus(Number(build.id), Number(build.definition.id));
+          build._abandonment = state.status === 16 ? 'abandoned' : 'not-abandoned';
+          if (changedAt) nextRunStates.set(key, { changedAt, state });
+        } catch {
+          build._abandonment = 'unknown';
+          warnings.push({ code: 'run_state_unavailable', message: `Current state for run ${build.id} could not be verified; its candidate evidence is withheld until a refresh succeeds.` });
+        }
+      }
+      try {
+        const { data: timeline } = await client.get(`build/builds/${build.id}/timeline`);
+        const tasks = (timeline.records || []).filter(record => record.type === 'Task' && record.log?.id && INTERESTING_LOG.test(record.name || ''));
+        const logs = await mapConcurrent(tasks, 2, async record => {
+          try {
+            const { data: text } = await client.get(`build/builds/${build.id}/logs/${record.log.id}`, {}, { text: true });
+            // Some ADO installations return JSON log lines despite the plain-text Accept header.
+            let logText = text;
+            try {
+              const parsed = JSON.parse(text);
+              if (Array.isArray(parsed.value)) logText = parsed.value.join('\n');
+            } catch { /* Plain text is the normal response. */ }
+            return { id: record.log.id, text: logText, recordName: record.name, recordIdentifier: record.identifier };
+          } catch {
+            warnings.push({ code: 'log_unavailable', message: `A supporting log for run ${build.id} is unavailable; some fields may be unknown.` });
+            return null;
+          }
+        });
+        details.set(Number(build.id), { timeline, logs: logs.filter(Boolean) });
+      } catch {
+        warnings.push({ code: 'timeline_unavailable', message: `Timeline for run ${build.id} is unavailable; its deployment result has not been inferred.` });
+        details.set(Number(build.id), { error: 'Timeline unavailable', timeline: { records: [] }, logs: [] });
+      }
+    });
+    const linkedQaIds = new Set();
+    for (const detail of details.values()) {
+      for (const log of detail.logs) {
+        if (!/Trigger QA pipeline/i.test(log.recordName)) continue;
+        const link = parseQaRunEvidence(log.text);
+        if (link?.pipelineId === config.pipelines.qa && Number.isSafeInteger(link.id) && !builds.some(build => build.id === link.id)) linkedQaIds.add(link.id);
+      }
+    }
+    await mapConcurrent([...linkedQaIds], 4, async id => {
+      try {
+        const { data: child } = await client.get(`build/builds/${id}`);
+        if (child.definition?.id === config.pipelines.qa) builds.push({ ...child, _kind: 'qa' });
+      } catch {
+        warnings.push({ code: 'qa_run_unavailable', message: `Linked QA run ${id} is unavailable; its result is unknown.` });
+      }
+    });
+    let environments = [];
+    const environmentRecords = [];
+    try {
+      const response = await client.list('distributedtask/environments', { 'api-version': '7.1-preview.1' }, 100);
+      environments = response.items.filter(env => config.environmentNames.includes(env.name));
+      await mapConcurrent(environments, 4, async environment => {
+        try {
+          const records = await client.list(`distributedtask/environments/${environment.id}/environmentdeploymentrecords`, { 'api-version': '7.1-preview.1' }, 20);
+          environmentRecords.push(...records.items.map(record => ({ ...record, environmentId: environment.id, environmentName: environment.name })));
+        } catch {
+          warnings.push({ code: 'environment_history_unavailable', message: `${environment.name} Environment history is unavailable; deployment timelines are used where present.` });
+        }
+      });
+    } catch {
+      warnings.push({ code: 'environments_unavailable', message: 'Environment history is unavailable; deployment timelines are used where present.' });
+    }
+    const fetchedAt = new Date().toISOString();
+    const limits = {
+      runsPerPipeline: config.runsPerPipeline,
+      runCount: builds.length,
+      retrievedRuns: builds.length,
+      limited: lists.some(list => list.limited),
+      scope: `Up to ${config.runsPerPipeline} recent runs per pipeline; older or deleted history is outside this scan.`,
+      pipelines: lists.map(list => ({ kind: list.kind, count: list.items.length, limited: list.limited })),
+      apiRequests: client.requests - callsBefore,
+    };
+    const dashboard = buildDashboard({ builds, details, environments, environmentRecords, organization: config.organization, project: config.project, fetchedAt, limits, warnings });
+    lastDetails = details;
+    lastBuilds = builds;
+    // Only verified minimal states from the current snapshot remain in memory.
+    runStates = nextRunStates;
+    cached = dashboard;
+    return dashboard;
+  }
+
+  return {
+    async get({ refresh = false } = {}) {
+      if (!refresh && cached && Date.now() - Date.parse(cached.fetchedAt) < config.cacheSeconds * 1000) return { ...cached, cached: true };
+      if (!pending) pending = load().finally(() => { pending = undefined; });
+      return pending;
+    },
+    run(id) {
+      const run = cached?.runs.find(run => Number(run.id) === id);
+      if (!run) return null;
+      const detail = lastDetails.get(id);
+      const source = lastBuilds.find(build => Number(build.id) === id);
+      const stages = (detail?.timeline?.records || []).filter(record => record.type === 'Stage').sort((a, b) => {
+        if (Number.isFinite(a.order) && Number.isFinite(b.order) && a.order !== b.order) return a.order - b.order;
+        const startedA = Date.parse(a.startTime) || Number.MAX_SAFE_INTEGER;
+        const startedB = Date.parse(b.startTime) || Number.MAX_SAFE_INTEGER;
+        return startedA - startedB || String(a.name).localeCompare(String(b.name));
+      }).map(record => ({
+        name: record.name || record.identifier,
+        status: record.result || record.state || 'unknown',
+        attempt: record.attempt || 1,
+        startedAt: record.startTime || null,
+        finishedAt: record.finishTime || null,
+      }));
+      return {
+        run,
+        stages,
+        evidence: [{ label: 'Original pipeline run', url: run.url, type: 'run' }],
+        tags: Array.isArray(source?.tags) ? source.tags : [],
+        note: detail ? 'Stage outcomes describe recorded pipeline activity, not live cluster health.' : 'Only run summary data was read for this pipeline.',
+      };
+    },
+  };
+}
