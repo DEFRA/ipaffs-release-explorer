@@ -156,10 +156,13 @@ read-only root filesystem, resource limits and process health probes. It needs n
 persistent volume or database. The container contains no Azure CLI or credentials;
 the AKS workload identity webhook supplies its runtime identity.
 
-The [pipeline](pipeline.yaml) tests the app, validates the chart, builds a
-Linux/amd64 image, pushes it to DEV ACR and deploys the resulting image digest to
-the dedicated `ipaffs-release-explorer` namespace. It is manually triggered during
-initial setup. Identity provisioning and ADO enrollment are described in the
+The [pipeline](pipeline.yaml) runs tests, validates the chart, and builds and
+smoke-tests a Linux/amd64 image for PRs targeting `main`, including draft PRs.
+PR checks run on an isolated Microsoft-hosted agent with synthetic configuration.
+After a merge or push to `main`, the pipeline repeats validation, pushes an image
+to DEV ACR and deploys its digest into the dedicated `ipaffs-release-explorer`
+namespace. Azure configuration and deployment stages are included only for `main`
+runs. Identity provisioning and ADO enrollment are described in the
 [deployment guide](deploy/README.md).
 
 ## Tests

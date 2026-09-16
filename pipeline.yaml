@@ -1,6 +1,14 @@
-# Standalone repository pipeline. Run manually until the first DEV setup is complete.
-trigger: none
-pr: none
+# PRs validate on an isolated hosted agent. Only main can publish and deploy.
+trigger:
+  branches:
+    include:
+      - main
+pr:
+  autoCancel: true
+  drafts: true
+  branches:
+    include:
+      - main
 
 name: $(Date:yyyyMMdd).$(Rev:r)
 
@@ -10,27 +18,23 @@ parameters:
     type: string
     default: ipaffs-release-explorer
 
-pool:
-  name: $(agentPool)
-
 variables:
-  # Keep organisation, infrastructure and identity configuration in ADO.
-  # See deploy/README.md for the complete non-secret variable contract.
-  - group: ReleaseExplorerDEV
+  # Resources must be available at pipeline scope for ADO authorisation.
+  # The group is absent from the compiled PR/non-main pipeline.
+  - ${{ if and(eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest')) }}:
+      - group: ReleaseExplorerDEV
   - name: imageRepository
     value: ipaffs/ipaffs-release-explorer
   - name: helmVersion
     value: 3.20.2
-  # Add these three non-secret variables to ReleaseExplorerDEV after identity setup:
-  # RELEASE_EXPLORER_IDENTITY_RESOURCE_ID
-  # RELEASE_EXPLORER_IDENTITY_CLIENT_ID
-  # RELEASE_EXPLORER_IDENTITY_TENANT_ID
 
 stages:
-  - stage: Build
-    displayName: Test, build and push
+  - stage: Validate
+    displayName: Test and build
+    pool:
+      vmImage: ubuntu-24.04
     jobs:
-      - job: BuildImage
+      - job: ValidateApp
         steps:
           - checkout: self
             clean: true
@@ -47,71 +51,96 @@ stages:
               helmVersionToInstall: $(helmVersion)
           - bash: bash deploy/scripts/validate-chart.sh
             displayName: Validate Helm chart
-          - task: AzureCLI@2
-            displayName: Build container and push to DEV ACR
+          - bash: bash deploy/scripts/validate-image.sh
+            displayName: Build and smoke-test container
             env:
-              ACR_NAME: $(acrName)
-              IMAGE_REPOSITORY: $(imageRepository)
               BUILD_ID: $(Build.BuildId)
-              SOURCE_REVISION: $(Build.SourceVersion)
-              ARTIFACT_DIR: $(Build.ArtifactStagingDirectory)/release-explorer
-              DOCKER_CONFIG: $(Agent.TempDirectory)/release-explorer-docker-$(Build.BuildId)
-            inputs:
-              azureSubscription: $(serviceConnection)
-              scriptType: bash
-              scriptLocation: scriptPath
-              scriptPath: deploy/scripts/build-push.sh
-              workingDirectory: $(Build.SourcesDirectory)
-              visibleAzLogin: false
-          - task: PublishPipelineArtifact@1
-            displayName: Publish deployment package
-            inputs:
-              targetPath: $(Build.ArtifactStagingDirectory)/release-explorer
-              artifact: release-explorer
 
-  - stage: DeployDEV
-    displayName: Deploy release explorer to DEV
-    dependsOn: Build
-    condition: succeeded()
-    jobs:
-      - deployment: DeployExplorer
-        displayName: Install chart in dedicated namespace
-        environment: DEV
-        strategy:
-          runOnce:
-            deploy:
-              steps:
-                - checkout: self
-                  clean: true
-                  persistCredentials: false
-                - download: current
+  # Omit Azure resources entirely when compiling a PR or a non-main branch run.
+  - ${{ if and(eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest')) }}:
+      - stage: Publish
+        displayName: Publish container and chart
+        dependsOn: Validate
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
+        pool:
+          name: $(agentPool)
+        jobs:
+          - job: PublishImage
+            steps:
+              - checkout: self
+                clean: true
+                persistCredentials: false
+              - task: HelmInstaller@1
+                displayName: Install Helm
+                inputs:
+                  helmVersionToInstall: $(helmVersion)
+              - task: AzureCLI@2
+                displayName: Build container and push to DEV ACR
+                env:
+                  ACR_NAME: $(acrName)
+                  IMAGE_REPOSITORY: $(imageRepository)
+                  BUILD_ID: $(Build.BuildId)
+                  SOURCE_REVISION: $(Build.SourceVersion)
+                  ARTIFACT_DIR: $(Build.ArtifactStagingDirectory)/release-explorer
+                  DOCKER_CONFIG: $(Agent.TempDirectory)/release-explorer-docker-$(Build.BuildId)
+                inputs:
+                  azureSubscription: $(serviceConnection)
+                  scriptType: bash
+                  scriptLocation: scriptPath
+                  scriptPath: deploy/scripts/build-push.sh
+                  workingDirectory: $(Build.SourcesDirectory)
+                  visibleAzLogin: false
+              - task: PublishPipelineArtifact@1
+                displayName: Publish deployment package
+                inputs:
+                  targetPath: $(Build.ArtifactStagingDirectory)/release-explorer
                   artifact: release-explorer
-                - task: HelmInstaller@1
-                  displayName: Install Helm
-                  inputs:
-                    helmVersionToInstall: $(helmVersion)
-                - task: AzureCLI@2
-                  displayName: Check identity and deploy to DEV AKS
-                  env:
-                    AKS_NAME: $(kubernetesCluster)
-                    AKS_RESOURCE_GROUP: $(resourceGroupName)
-                    ACR_NAME: $(acrName)
-                    NAMESPACE: ${{ parameters.namespace }}
-                    IDENTITY_RESOURCE_ID: $(RELEASE_EXPLORER_IDENTITY_RESOURCE_ID)
-                    IDENTITY_CLIENT_ID: $(RELEASE_EXPLORER_IDENTITY_CLIENT_ID)
-                    IDENTITY_TENANT_ID: $(RELEASE_EXPLORER_IDENTITY_TENANT_ID)
-                    ADO_ORGANIZATION: $(ADO_ORGANIZATION)
-                    ADO_PROJECT: $(ADO_PROJECT)
-                    ADO_DEV_PIPELINE_ID: $(ADO_DEV_PIPELINE_ID)
-                    ADO_CREATE_RELEASE_PIPELINE_ID: $(ADO_CREATE_RELEASE_PIPELINE_ID)
-                    ADO_RELEASE_PIPELINE_ID: $(ADO_RELEASE_PIPELINE_ID)
-                    ADO_QA_PIPELINE_ID: $(ADO_QA_PIPELINE_ID)
-                    ARTIFACT_DIR: $(Pipeline.Workspace)/release-explorer
-                    DEPLOY_TEMP_DIR: $(Agent.TempDirectory)/release-explorer-$(Build.BuildId)
-                  inputs:
-                    azureSubscription: $(serviceConnection)
-                    scriptType: bash
-                    scriptLocation: scriptPath
-                    scriptPath: deploy/scripts/deploy-dev.sh
-                    workingDirectory: $(Build.SourcesDirectory)
-                    visibleAzLogin: false
+
+      - stage: DeployDEV
+        displayName: Deploy release explorer to DEV
+        dependsOn: Publish
+        condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'), ne(variables['Build.Reason'], 'PullRequest'))
+        pool:
+          name: $(agentPool)
+        jobs:
+          - deployment: DeployExplorer
+            displayName: Install chart in dedicated namespace
+            environment: DEV
+            strategy:
+              runOnce:
+                deploy:
+                  steps:
+                    - checkout: self
+                      clean: true
+                      persistCredentials: false
+                    - download: current
+                      artifact: release-explorer
+                    - task: HelmInstaller@1
+                      displayName: Install Helm
+                      inputs:
+                        helmVersionToInstall: $(helmVersion)
+                    - task: AzureCLI@2
+                      displayName: Check identity and deploy to DEV AKS
+                      env:
+                        AKS_NAME: $(kubernetesCluster)
+                        AKS_RESOURCE_GROUP: $(resourceGroupName)
+                        ACR_NAME: $(acrName)
+                        NAMESPACE: ${{ parameters.namespace }}
+                        IDENTITY_RESOURCE_ID: $(RELEASE_EXPLORER_IDENTITY_RESOURCE_ID)
+                        IDENTITY_CLIENT_ID: $(RELEASE_EXPLORER_IDENTITY_CLIENT_ID)
+                        IDENTITY_TENANT_ID: $(RELEASE_EXPLORER_IDENTITY_TENANT_ID)
+                        ADO_ORGANIZATION: $(ADO_ORGANIZATION)
+                        ADO_PROJECT: $(ADO_PROJECT)
+                        ADO_DEV_PIPELINE_ID: $(ADO_DEV_PIPELINE_ID)
+                        ADO_CREATE_RELEASE_PIPELINE_ID: $(ADO_CREATE_RELEASE_PIPELINE_ID)
+                        ADO_RELEASE_PIPELINE_ID: $(ADO_RELEASE_PIPELINE_ID)
+                        ADO_QA_PIPELINE_ID: $(ADO_QA_PIPELINE_ID)
+                        ARTIFACT_DIR: $(Pipeline.Workspace)/release-explorer
+                        DEPLOY_TEMP_DIR: $(Agent.TempDirectory)/release-explorer-$(Build.BuildId)
+                      inputs:
+                        azureSubscription: $(serviceConnection)
+                        scriptType: bash
+                        scriptLocation: scriptPath
+                        scriptPath: deploy/scripts/deploy-dev.sh
+                        workingDirectory: $(Build.SourcesDirectory)
+                        visibleAzLogin: false

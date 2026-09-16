@@ -44,8 +44,10 @@ The pipeline uses ADO deployment environment `DEV` and image repository
 through a temporary values file; the published chart contains no environment IDs.
 
 Use an agent in that pool which can reach the private AKS API and ACR, and has
-Docker, Azure CLI, Bash and jq. The pipeline installs Node, Helm, kubectl and
-kubelogin. Authorise the new pipeline to use the variable groups, agent pool,
+Docker, Azure CLI, Bash and jq. Publishing and deployment use this private pool;
+validation uses a Microsoft-hosted `ubuntu-24.04` agent and needs hosted parallel
+job capacity. The pipeline installs Node, Helm, kubectl and
+kubelogin. Authorise the new pipeline to use the variable group, agent pool,
 service connection and DEV environment. Existing environment checks still apply.
 
 There are three separate identities involved:
@@ -123,10 +125,37 @@ RELEASE_EXPLORER_IDENTITY_CLIENT_ID
 RELEASE_EXPLORER_IDENTITY_TENANT_ID
 ```
 
-The file uses manual triggers initially. Queue it after identity and resource
-authorisation are complete. It:
+The pipeline runs automatically as follows:
 
-1. Runs the app tests and validates the chart.
+| Event | Behaviour |
+| --- | --- |
+| PR targeting `main`, including drafts | Tests, chart validation, container build and sample-data smoke check |
+| Another commit on the same PR | New validation; superseded PR validation is cancelled |
+| Merge or direct push to `main` | Validation, ACR publication and DEV deployment |
+| Manual run on `main` | The same validation, publication and deployment |
+| Manual run on another branch | Validation only |
+
+The PR path uses synthetic `.env.example` values and a disposable hosted agent.
+The DEV variable group, Azure tasks and private agent pool are omitted during
+template expansion for PR and non-main runs. Publishing and deployment also check
+the source branch and build reason before running.
+
+For the public repository, keep ADO's **Make secrets available to builds of forks**
+and **Make fork builds have the same permissions as regular builds** settings
+disabled. Use resource-level branch-control checks allowing only
+`refs/heads/main` on the Azure service connection, private agent pool and DEV
+environment. YAML conditions describe normal behaviour; PR authors can
+change that YAML, so resource permissions and checks must enforce access outside
+the repository. Fork PR runs may also require project policy enablement or a
+team-member comment; the YAML trigger does not override those settings. See
+Microsoft's [GitHub pipeline guidance](https://learn.microsoft.com/en-us/azure/devops/pipelines/repos/github?view=azure-devops).
+
+Complete identity and resource authorisation before the first merge into `main`.
+For automatic triggering, register this YAML with ADO and leave UI trigger
+overrides disabled. A run on `main`:
+
+1. Runs the app tests, validates the chart, builds the container and checks its
+   health, page and sample data with the restricted runtime settings.
 2. Builds Linux/amd64 and pushes `build-<ADO Build ID>` to the existing DEV ACR.
 3. Publishes the chart, DEV values, commit and resolved image digest as a pipeline
    artifact. The deploy stage uses that artifact and digest.
