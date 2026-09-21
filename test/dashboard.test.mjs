@@ -280,7 +280,7 @@ function assertQaUnavailable(data) {
   assert.equal(data.runs.find(run => run.id === 501).qaLinks[0].availability, undefined);
 }
 
-test('missing old QA runs show retention context without inventing their execution result', async () => {
+test('missing old QA runs show retention context beside their result without a dashboard-wide notice', async () => {
   for (const [metadata, ageBasis, ageDays, label] of [
     [{}, 'queued', 73, 'Likely past retention window'],
     [{ finishedDate: '2035-01-02T12:00:00Z' }, 'finished', 72, 'Past retention window'],
@@ -297,9 +297,9 @@ test('missing old QA runs show retention context without inventing their executi
     assert.equal(link.availability.ageBasis, ageBasis);
     assert.equal(link.availability.minimumRuns, 2);
     assert.ok(link.availability.detail.length > 0);
-    const notice = data.warnings.find(warning => warning.code === 'qa_run_past_retention');
-    assert.equal(notice.severity, 'info');
-    assert.equal(data.warnings.some(warning => warning.code === 'qa_run_unavailable'), false);
+    assert.deepEqual(data.warnings, []);
+    assert.deepEqual(source.service.run(501).run.qaLinks[0].availability, link.availability,
+      'The run-detail response used beside QA links must retain the full explanation');
     assert.equal(retentionRequestCount(source), 1);
     assertOnlyApiRequests(source.calls);
   }
@@ -397,7 +397,8 @@ test('retention policy is fetched once per scan and re-read on refresh', async (
   source.setFailure('build/builds/701', 404);
   source.setFailure('build/builds/704', 404);
   const initial = await source.service.get();
-  assert.equal(initial.warnings.filter(warning => warning.code === 'qa_run_past_retention').length, 2);
+  assert.deepEqual(initial.warnings, []);
+  for (const id of [501, 502]) assert.equal(source.service.run(id).run.qaLinks[0].availability.status, 'past-retention');
   assert.equal(retentionRequestCount(source), 1);
   const callsBefore = source.calls.length;
   assert.equal((await source.service.get()).cached, true);

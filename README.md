@@ -99,8 +99,9 @@ project retention policy through the Build API. If retained QA timestamps are
 older than the applicable period and the scan contains enough newer successful
 QA runs to exceed the recent-run protection, it shows **Past retention window**.
 When only the queue date survives, it shows **Likely past retention window** and
-labels the age as an estimate. This appears in both history notices and QA details;
-it does not invent a test result or claim to know why the run was removed.
+labels the age as an estimate. The retention label and explanation appear beside
+the linked QA run in the deployment/run details, without a page-wide notice.
+They do not invent a test result or claim to know why the run was removed.
 
 The policy is read once per affected snapshot and refreshed with the dashboard;
 no retention periods are hard-coded. Missing policy access, insufficient history,
