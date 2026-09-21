@@ -15,22 +15,30 @@ async function fixture(t) {
   const temp = await mkdtemp(join(tmpdir(), 'explorer-ingress-test-'));
   t.after(() => rm(temp, { recursive: true, force: true }));
   const callsFile = join(temp, 'calls.jsonl');
-  // Only curl is replaced: real jq must validate the response, and no request is sent.
+  const sleepsFile = join(temp, 'sleeps.txt');
+  // Real jq validates every response. Curl and sleep are replaced to keep retries
+  // deterministic, fast and free of network requests.
   await writeFile(join(temp, 'curl'), `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
+const index = fs.readFileSync(process.env.TEST_CURL_CALLS, 'utf8').split('\\n').filter(Boolean).length;
 fs.appendFileSync(process.env.TEST_CURL_CALLS, JSON.stringify(args) + '\\n');
 const output = args[args.indexOf('--output') + 1];
-if (!args.includes('--output') || !output) process.exit(97);
-fs.writeFileSync(output, process.env.TEST_HEALTH_BODY);
-process.exit(Number(process.env.TEST_CURL_EXIT));
+if (!args.includes('--output') || !output || args[args.indexOf('--write-out') + 1] !== '%{http_code}') process.exit(97);
+const sequence = JSON.parse(process.env.TEST_HEALTH_SEQUENCE || '[]');
+const response = sequence[Math.min(index, sequence.length - 1)] || {};
+fs.writeFileSync(output, response.body ?? process.env.TEST_HEALTH_BODY);
+process.stdout.write(response.status ?? process.env.TEST_HTTP_STATUS);
+process.exit(Number(response.exit ?? process.env.TEST_CURL_EXIT));
 `, { mode: 0o755 });
+  await writeFile(join(temp, 'sleep'), '#!/bin/sh\nprintf "%s\\n" "$*" >> "$TEST_SLEEP_CALLS"\n', { mode: 0o755 });
   return async (overrides = {}, shell = null) => {
     await writeFile(callsFile, '');
+    await writeFile(sleepsFile, '');
     const env = {
       PATH: `${temp}:${process.env.PATH}`,
       INGRESS_HOST: 'explorer.example.invalid', DEPLOY_TEMP_DIR: temp,
-      TEST_CURL_CALLS: callsFile, TEST_CURL_EXIT: '0',
+      TEST_CURL_CALLS: callsFile, TEST_CURL_EXIT: '0', TEST_HTTP_STATUS: '200', TEST_SLEEP_CALLS: sleepsFile,
       TEST_HEALTH_BODY: JSON.stringify({ status: 'ok', readOnly: true }),
       ...overrides,
     };
@@ -42,6 +50,7 @@ process.exit(Number(process.env.TEST_CURL_EXIT));
       result = { code: error.code, stdout: error.stdout || '', stderr: error.stderr || '' };
     }
     result.calls = (await readFile(callsFile, 'utf8')).trim().split('\n').filter(Boolean).map(line => JSON.parse(line));
+    result.sleeps = (await readFile(sleepsFile, 'utf8')).trim().split('\n').filter(Boolean);
     return result;
   };
 }
@@ -52,6 +61,7 @@ test('ingress certificate verification stays enabled when the optional setting i
     const result = await run(setting === undefined ? {} : { INGRESS_SKIP_TLS_VERIFY: setting });
     assert.equal(result.code, 0, result.stderr);
     assert.equal(result.calls.length, 1);
+    assert.deepEqual(result.sleeps, []);
     assert.equal(result.calls[0].includes('--insecure'), false);
     assert.equal(result.stdout.includes('##vso['), false);
     assert.match(result.stdout, /passed with certificate verification enabled/);
@@ -65,11 +75,10 @@ test('explicit true bypasses verification only on the unauthenticated health req
   assert.equal(result.calls.length, 1);
   const call = result.calls[0];
   assert.ok(call.includes('--insecure'));
-  assert.ok(call.includes('--fail'));
-  assert.ok(call.includes('--retry-all-errors'));
+  assert.equal(call.some(arg => ['--retry', '--retry-all-errors', '--retry-delay'].includes(arg)), false);
   assert.equal(call[call.indexOf('--connect-timeout') + 1], '10');
   assert.equal(call[call.indexOf('--max-time') + 1], '15');
-  assert.equal(call[call.indexOf('--retry') + 1], '6');
+  assert.equal(call[call.indexOf('--write-out') + 1], '%{http_code}');
   assert.equal(call.at(-1), 'https://explorer.example.invalid/healthz');
   assert.equal(call.some(arg => ['-H', '--header', '-u', '--user', '-L', '--location'].includes(arg)), false);
   assert.match(result.stdout, /##vso\[task\.logissue type=warning\]/);
@@ -99,21 +108,89 @@ test('the sourceable helper does no I/O until called and can reset the exception
   assert.equal(result.stdout.includes('##vso['), false);
 });
 
-test('HTTP, DNS and connection failures still fail when certificate checks are skipped', async t => {
+test('exhausted curl failures preserve the final exit code and bounded retries', async t => {
   const run = await fixture(t);
-  for (const code of [22, 6, 7, 28]) {
+  for (const code of [22, 6, 7, 28, 60]) {
     const result = await run({ INGRESS_SKIP_TLS_VERIFY: 'true', TEST_CURL_EXIT: String(code) });
     assert.equal(result.code, code);
+    assert.equal(result.calls.length, 7);
+    assert.deepEqual(result.sleeps, Array(6).fill('5'));
+    assert.match(result.stderr, new RegExp(`attempt 7/7: request failed \\(curl exit ${code}\\)`));
     assert.equal(result.stdout.includes('health check passed'), false);
   }
 });
 
 test('empty, malformed or unhealthy successful responses fail the health check', async t => {
   const run = await fixture(t);
-  for (const body of ['', 'not-json', '{}', '{"status":"ok","readOnly":false}', '{"status":"error","readOnly":true}']) {
+  for (const body of ['', 'not-json', '<!DOCTYPE html><title>private upstream response</title>', '{}', '{"status":"ok","readOnly":false}', '{"status":"error","readOnly":true}']) {
     const result = await run({ INGRESS_SKIP_TLS_VERIFY: 'true', TEST_HEALTH_BODY: body });
-    assert.notEqual(result.code, 0, body);
-    assert.match(result.stderr, /did not reach the release explorer/);
+    assert.equal(result.code, 1, body);
+    assert.equal(result.calls.length, 7);
+    assert.deepEqual(result.sleeps, Array(6).fill('5'));
+    assert.match(result.stderr, /did not reach the release explorer after 7 attempts/);
+    assert.doesNotMatch(result.stderr, /jq:|parse error|private upstream response/);
     assert.equal(result.stdout.includes('health check passed'), false);
   }
+});
+
+test('a transient HTTP 200 HTML error page is retried until the app health response arrives', async t => {
+  const run = await fixture(t);
+  const result = await run({ TEST_HEALTH_SEQUENCE: JSON.stringify([
+    { body: '<!DOCTYPE html><title>upstream temporarily unavailable</title>' },
+    {},
+  ]) });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.calls.length, 2);
+  assert.deepEqual(result.sleeps, ['5']);
+  assert.match(result.stderr, /attempt 1\/7: HTTP 200 did not contain the expected application health response/);
+  assert.doesNotMatch(result.stderr, /upstream temporarily unavailable|jq:|parse error/);
+  assert.match(result.stdout, /health check passed/);
+});
+
+test('redirects and other non-200 statuses never pass even with a healthy JSON body', async t => {
+  const run = await fixture(t);
+  for (const status of ['301', '302', '307', '308', '204', '503']) {
+    const result = await run({ TEST_HTTP_STATUS: status });
+    assert.equal(result.code, 1, status);
+    assert.equal(result.calls.length, 7);
+    assert.deepEqual(result.sleeps, Array(6).fill('5'));
+    assert.match(result.stderr, new RegExp(`HTTP ${status}; expected HTTP 200`));
+    assert.ok(result.calls.every(args => !args.includes('--location') && !args.includes('-L')));
+    assert.equal(result.stdout.includes('health check passed'), false);
+  }
+});
+
+test('transient HTTP and transport failures can recover within the retry window', async t => {
+  const run = await fixture(t);
+  const result = await run({ TEST_HEALTH_SEQUENCE: JSON.stringify([
+    { status: '503' },
+    { status: '000', exit: 7 },
+    { status: '000', exit: 28 },
+    {},
+  ]) });
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(result.calls.length, 4);
+  assert.deepEqual(result.sleeps, ['5', '5', '5']);
+  assert.match(result.stderr, /HTTP 503/);
+  assert.match(result.stderr, /curl exit 7/);
+  assert.match(result.stderr, /curl exit 28/);
+  assert.match(result.stdout, /health check passed/);
+});
+
+test('the final failed attempt determines the exit code without leaking invalid status output', async t => {
+  const run = await fixture(t);
+  const transport = await run({ TEST_HEALTH_SEQUENCE: JSON.stringify([
+    { status: '200', body: '<html>unavailable</html>' },
+    { status: '000', exit: 28 },
+  ]) });
+  assert.equal(transport.code, 28);
+  assert.equal(transport.calls.length, 7);
+  const invalid = await run({ TEST_HEALTH_SEQUENCE: JSON.stringify([
+    { status: '000', exit: 28 },
+    { status: '200\nprivate unexpected output' },
+  ]) });
+  assert.equal(invalid.code, 1);
+  assert.equal(invalid.calls.length, 7);
+  assert.match(invalid.stderr, /invalid HTTP status/);
+  assert.doesNotMatch(invalid.stdout + invalid.stderr, /private unexpected output/);
 });
