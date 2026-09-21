@@ -111,6 +111,7 @@ test('only Build summary endpoints use the API version exposing abandoned status
   await client.get('build/builds/501');
   await client.get('build/builds/501/timeline');
   await client.get('build/builds/501/logs/17', {}, { text: true });
+  await client.get('build/retention');
   await client.list('distributedtask/environments', { 'api-version': '7.1-preview.1' });
   await client.list('distributedtask/environments/202/environmentdeploymentrecords', { 'api-version': '7.1-preview.1' }, 20);
   assert.deepEqual(calls, [
@@ -118,6 +119,7 @@ test('only Build summary endpoints use the API version exposing abandoned status
     { path: 'build/builds/501', version: '7.2-preview.8', accept: 'application/json' },
     { path: 'build/builds/501/timeline', version: '7.1', accept: 'application/json' },
     { path: 'build/builds/501/logs/17', version: '7.1', accept: 'text/plain' },
+    { path: 'build/retention', version: '7.1', accept: 'application/json' },
     { path: 'distributedtask/environments', version: '7.1-preview.1', accept: 'application/json' },
     { path: 'distributedtask/environments/202/environmentdeploymentrecords', version: '7.1-preview.1', accept: 'application/json' },
   ]);

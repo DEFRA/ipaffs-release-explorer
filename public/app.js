@@ -272,7 +272,7 @@ function renderCoverage() {
   });
   if (!array(state.data.coverage).length) $('coverage').append(node('p', 'muted', 'Coverage details are not available for this scan.'));
   $('warnings').replaceChildren();
-  array(state.data.warnings).forEach((warning) => $('warnings').append(node('p', 'warning-item', typeof warning === 'string' ? warning : warning.message)));
+  array(state.data.warnings).forEach((warning) => $('warnings').append(node('p', warning.severity === 'info' ? 'warning-item history-note' : 'warning-item', typeof warning === 'string' ? warning : warning.message)));
 }
 
 function compareVersions(a, b) {
@@ -483,8 +483,9 @@ function renderQaLinks(links, container) {
   const section = append(node('section', 'drawer-section'), node('h3', '', 'Linked QA runs'));
   links.forEach((qa) => {
     const link = externalLink(`QA run #${qa.id} ↗`, qa.url, 'evidence-link');
-    append(link, node('span', '', `Linked QA result: ${badge(recordStatus(qa)).textContent}`));
+    append(link, node('span', '', qa.availability?.label || `Linked QA result: ${badge(recordStatus(qa)).textContent}`));
     section.append(link);
+    if (qa.availability?.detail) section.append(node('p', 'drawer-note', qa.availability.detail));
   });
   section.append(node('p', 'drawer-note', 'These QA runs were linked from pipeline evidence. The exact revision tested is not recorded, so a pass is not proof that this manifest commit was tested.'));
   container.append(section);

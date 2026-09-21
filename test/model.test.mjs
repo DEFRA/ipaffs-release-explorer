@@ -162,6 +162,31 @@ test('linked passing QA remains explicitly unverified against the deployed revis
   assert.equal('testedCommit' in linked, false);
 });
 
+test('QA evidence preserves the child timestamps and retention flags from both queue response formats', () => {
+  for (const timestamps of [
+    { createdDate: at(1), finishedDate: at(2) },
+    { queueTime: at(1), finishTime: at(2) },
+  ]) {
+    assert.deepEqual(parseQaRunEvidence(JSON.stringify({
+      id: 503, pipeline: { id: 104 }, ...timestamps, reason: 'manual', keepForever: true, retainedByRelease: false,
+    })), { id: 503, pipelineId: 104, queuedAt: at(1), finishedAt: at(2), reason: 'manual', keepForever: true, retainedByRelease: false });
+  }
+});
+
+test('QA availability is separate from results and cannot replace an available child outcome', () => {
+  const record = { id: 'qa-task', type: 'Task', name: 'Trigger QA pipeline', state: 'completed', result: 'succeeded', log: { id: 29 } };
+  const entries = [[1, detail([record], [{ id: 29, recordName: 'Trigger QA pipeline', text: '{"id":2,"pipeline":{"id":104}}' }])]];
+  const availability = { status: 'past-retention', label: 'Likely past retention window', detail: 'Synthetic retention context.' };
+  const extra = { qaAvailability: new Map([[2, availability]]) };
+  const missing = model([build(1)], entries, extra).runs.find(run => run.id === 1).qaLinks[0];
+  assert.deepEqual(missing.availability, availability);
+  assert.equal(missing.result, null);
+  assert.equal(missing.revisionVerified, false);
+  const present = model([build(1), build(2, { _kind: 'qa', definition: { id: 104, name: 'QA' }, result: 'failed' })], entries, extra).runs.find(run => run.id === 1).qaLinks[0];
+  assert.equal(present.result, 'failed');
+  assert.equal(present.availability, undefined);
+});
+
 test('configured pipeline kinds support arbitrary IDs and names', () => {
   const data = model([build(1, { definition: { id: 999, name: 'Alternate release' }, _kind: 'release' })], [[1, detail(chartTimeline('TST'))]]);
   assert.equal(env(data, 'TST').lastSuccess.runId, 1);

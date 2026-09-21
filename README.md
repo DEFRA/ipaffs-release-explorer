@@ -70,6 +70,19 @@ The failed run remains available through its evidence link. Failed runs with
 deployment records still contribute their actual results; missing history or
 access failures continue to produce warnings.
 
+For a linked QA run that ADO reports as not found, the app reads the current
+project retention policy through the Build API. If retained QA timestamps are
+older than the applicable period and the scan contains enough newer successful
+QA runs to exceed the recent-run protection, it shows **Past retention window**.
+When only the queue date survives, it shows **Likely past retention window** and
+labels the age as an estimate. This appears in both history notices and QA details;
+it does not invent a test result or claim to know why the run was removed.
+
+The policy is read once per affected snapshot and refreshed with the dashboard;
+no retention periods are hard-coded. Missing policy access, insufficient history,
+explicit retention exceptions, and permission or connection failures leave the
+result unknown. The minimum-run check follows GitHub-backed pipeline retention.
+
 Environment histories may also contain unrelated infrastructure deployments.
 The app uses the configured IPAFFS pipeline identities and their timelines,
 without treating a Grafana or other infrastructure deployment as an application
@@ -197,6 +210,7 @@ application uses Node's standard library for both the server and tests.
 
 - [ADO builds and source refs](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/list?view=azure-devops-rest-7.1)
 - [Timeline results and attempts](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/timeline/get?view=azure-devops-rest-7.1)
+- [Project retention settings](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/retention/get?view=azure-devops-rest-7.1)
 - [Environment deployment records](https://learn.microsoft.com/en-us/rest/api/azure/devops/distributedtask/environmentdeployment-records/list?view=azure-devops-rest-7.1)
 - [Azure CLI Entra tokens for ADO](https://learn.microsoft.com/en-us/azure/devops/cli/entra-tokens?view=azure-devops)
 - [ADO service principals and managed identities](https://learn.microsoft.com/en-us/azure/devops/integrate/get-started/authentication/service-principal-managed-identity?view=azure-devops)

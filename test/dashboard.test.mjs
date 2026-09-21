@@ -19,9 +19,10 @@ const createRun = (overrides = {}) => ({
   queueTime: changedAt, startTime: changedAt, finishTime: changedAt, ...overrides,
 });
 
-function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {} } = {}) {
+function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {}, qaEvidence = {}, retentionPolicy, now } = {}) {
   let runs = initialRuns;
-  let failure;
+  let policy = retentionPolicy;
+  const failures = new Map();
   const calls = [];
   const client = new AdoClient(config, {
     authorization: async () => 'Bearer fixture-workload-identity-token',
@@ -32,9 +33,14 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelin
       // Authenticated web pages can fail for this identity. They are never needed.
       if (url.pathname.includes('/_build/')) return new Response('private-page-error', { status: 500 });
       const path = url.pathname.split('/_apis/')[1];
-      if (failure?.path === path) {
-        if (failure.status === 'network') throw new Error('private-network-error');
-        return new Response('private-upstream-error', { status: failure.status });
+      if (failures.has(path)) {
+        const status = failures.get(path);
+        if (status === 'network') throw new Error('private-network-error');
+        return new Response('private-upstream-error', { status });
+      }
+      if (path === 'build/retention') {
+        assert.equal(url.searchParams.get('api-version'), '7.1');
+        return Response.json(policy);
       }
       if (path === 'build/builds') {
         assert.equal(url.searchParams.get('api-version'), '7.2-preview.8');
@@ -51,13 +57,13 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelin
         if (Object.hasOwn(timelines, timeline[1])) return timelines[timeline[1]] === null
           ? new Response(null, { status: 204 }) : Response.json(timelines[timeline[1]]);
         const records = [{ id: 'create-task', type: 'Task', name: 'Create release branch or next patch tag', state: 'completed', result: 'succeeded', finishTime: changedAt, log: { id: 17 } }];
-        if (linkedQa) records.push({ id: 'qa-task', type: 'Task', name: 'Trigger QA pipeline', state: 'completed', result: 'succeeded', log: { id: 18 } });
+        if (linkedQa || qaEvidence[timeline[1]]) records.push({ id: 'qa-task', type: 'Task', name: 'Trigger QA pipeline', state: 'completed', result: 'succeeded', log: { id: 18 } });
         return Response.json({ records });
       }
       const log = path.match(/^build\/builds\/(\d+)\/logs\/(\d+)$/);
       if (log) {
         assert.equal(url.searchParams.get('api-version'), '7.1');
-        if (Number(log[2]) === 18) return new Response(JSON.stringify({ id: linkedQa.id, definition: linkedQa.definition }));
+        if (Number(log[2]) === 18) return new Response(JSON.stringify(qaEvidence[log[1]] || { id: linkedQa.id, definition: linkedQa.definition }));
         return new Response(`Created tag '${versions[log[1]] || '4.2.0'}' at ${sha}`);
       }
       if (path === 'distributedtask/environments') return Response.json({ value: [] });
@@ -65,9 +71,10 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelin
     },
   });
   return {
-    service: createDashboardService(config, client), calls,
+    service: createDashboardService(config, client, now ? { now } : undefined), calls,
     setRuns(next) { runs = next; },
-    setFailure(path, status = 500) { failure = path ? { path, status } : null; },
+    setRetentionPolicy(next) { policy = next; },
+    setFailure(path, status = 500) { if (path) failures.set(path, status); else failures.clear(); },
   };
 }
 
@@ -204,4 +211,159 @@ test('nonempty deployment evidence takes precedence over validation errors in a 
   assert.equal(data.environments.find(environment => environment.name === 'TST').lastSuccess.runId, 501);
   assert.equal(data.environments.find(environment => environment.name === 'PRE').latestAttempt.status, 'failed');
   assert.equal(source.service.run(501).stages.length, 2);
+});
+
+const retentionNow = Date.parse(changedAt);
+const retentionPolicy = {
+  purgeRuns: { value: 60 }, purgePullRequestRuns: { value: 30 }, retainRunsPerProtectedBranch: { value: 2 },
+};
+const oldQaEvidence = (overrides = {}) => ({
+  id: 701, definition: { id: config.pipelines.qa }, createdDate: '2035-01-01T12:00:00Z', reason: 'manual', ...overrides,
+});
+const newerQaRuns = () => [702, 703].map(id => createRun({
+  id, definition: { id: config.pipelines.qa, name: 'QA' },
+  queueTime: '2035-03-01T12:00:00Z', startTime: '2035-03-01T12:01:00Z', finishTime: '2035-03-01T12:02:00Z',
+}));
+const linkedRequestCount = source => source.calls.filter(url => /\/build\/builds\/701$/.test(url.pathname)).length;
+const retentionRequestCount = source => source.calls.filter(url => url.pathname.endsWith('/build/retention')).length;
+function missingQaFixture({ evidence = oldQaEvidence(), runs = newerQaRuns(), policy = retentionPolicy, ...options } = {}) {
+  const source = fixture([createRun(), ...runs], {
+    qaEvidence: { 501: evidence }, retentionPolicy: policy, now: () => retentionNow, ...options,
+  });
+  source.setFailure('build/builds/701', 404);
+  return source;
+}
+function assertQaUnavailable(data) {
+  assert.ok(data.warnings.some(warning => warning.code === 'qa_run_unavailable'));
+  assert.equal(data.warnings.some(warning => warning.code === 'qa_run_past_retention'), false);
+  assert.equal(data.runs.find(run => run.id === 501).qaLinks[0].availability, undefined);
+}
+
+test('missing old QA runs show retention context without inventing their execution result', async () => {
+  for (const [metadata, ageBasis, ageDays, label] of [
+    [{}, 'queued', 73, 'Likely past retention window'],
+    [{ finishedDate: '2035-01-02T12:00:00Z' }, 'finished', 72, 'Past retention window'],
+  ]) {
+    const source = missingQaFixture({ evidence: oldQaEvidence(metadata) });
+    const data = await source.service.get();
+    const link = data.runs.find(run => run.id === 501).qaLinks[0];
+    assert.equal(link.status, 'unknown');
+    assert.equal(link.result, null);
+    assert.equal(link.availability.status, 'past-retention');
+    assert.equal(link.availability.label, label);
+    assert.equal(link.availability.retentionDays, 60);
+    assert.equal(link.availability.ageDays, ageDays);
+    assert.equal(link.availability.ageBasis, ageBasis);
+    assert.equal(link.availability.minimumRuns, 2);
+    assert.ok(link.availability.detail.length > 0);
+    const notice = data.warnings.find(warning => warning.code === 'qa_run_past_retention');
+    assert.equal(notice.severity, 'info');
+    assert.equal(data.warnings.some(warning => warning.code === 'qa_run_unavailable'), false);
+    assert.equal(retentionRequestCount(source), 1);
+    assertOnlyApiRequests(source.calls);
+  }
+});
+
+test('a missing pull request QA run uses the project pull request retention duration', async () => {
+  const source = missingQaFixture({ evidence: oldQaEvidence({ createdDate: '2035-02-01T12:00:00Z', reason: 'pullRequest' }) });
+  const data = await source.service.get();
+  const availability = data.runs.find(run => run.id === 501).qaLinks[0].availability;
+  assert.equal(availability.retentionDays, 30);
+  assert.equal(availability.ageDays, 42);
+});
+
+test('permission and transport failures never become retention notices', async () => {
+  for (const status of [401, 403, 500, 'network']) {
+    const source = missingQaFixture();
+    source.setFailure('build/builds/701', status);
+    const data = await source.service.get();
+    assertQaUnavailable(data);
+    assert.equal(retentionRequestCount(source), 0);
+    assert.equal(JSON.stringify(data).includes('private-'), false);
+  }
+});
+
+test('retention remains unknown with recent, missing or protected QA evidence', async () => {
+  for (const evidence of [
+    oldQaEvidence({ createdDate: '2035-03-10T12:00:00Z' }),
+    oldQaEvidence({ createdDate: undefined }),
+    oldQaEvidence({ createdDate: 'not-a-date' }),
+    oldQaEvidence({ keepForever: true }),
+    oldQaEvidence({ retainedByRelease: true }),
+  ]) {
+    const source = missingQaFixture({ evidence });
+    assertQaUnavailable(await source.service.get());
+  }
+});
+
+test('retention requires enough newer successful completed QA runs within the scan', async () => {
+  const [first, second] = newerQaRuns();
+  for (const runs of [
+    [first],
+    [first, { ...second, status: 'inProgress', result: null, finishTime: null }],
+    [first, { ...second, result: 'failed' }],
+    [first, { ...second, finishTime: '2035-04-01T12:00:00Z' }],
+    [first, { ...second, queueTime: '2034-12-01T12:00:00Z' }],
+    [first, { ...second, definition: { id: config.pipelines.create } }],
+  ]) {
+    const source = missingQaFixture({ runs });
+    assertQaUnavailable(await source.service.get());
+  }
+});
+
+test('an unavailable project policy preserves the ordinary missing QA warning', async () => {
+  for (const status of [403, 500, 'network']) {
+    const source = missingQaFixture();
+    source.setFailure('build/retention', status);
+    const data = await source.service.get();
+    assertQaUnavailable(data);
+    assert.equal(retentionRequestCount(source), 1);
+    assert.equal(JSON.stringify(data).includes('private-'), false);
+  }
+});
+
+test('available QA results take precedence over age and never request retention policy', async () => {
+  const linkedQa = createRun({ id: 701, definition: { id: config.pipelines.qa, name: 'QA' }, result: 'failed' });
+  const source = missingQaFixture({ linkedQa });
+  source.setFailure(null);
+  const data = await source.service.get();
+  const link = data.runs.find(run => run.id === 501).qaLinks[0];
+  assert.equal(link.result, 'failed');
+  assert.equal(link.status, 'completed');
+  assert.equal(link.availability, undefined);
+  assert.equal(retentionRequestCount(source), 0);
+  assert.equal(data.warnings.some(warning => warning.code.startsWith('qa_run_')), false);
+});
+
+test('failed QA trigger tasks and other pipeline IDs cannot supply retention evidence', async () => {
+  for (const evidence of [oldQaEvidence(), oldQaEvidence({ definition: { id: 999 } })]) {
+    const successful = evidence.definition.id !== config.pipelines.qa;
+    const source = missingQaFixture({ evidence, timelines: {
+      501: { records: [{ id: 'qa-task', type: 'Task', name: 'Trigger QA pipeline', state: 'completed', result: successful ? 'succeeded' : 'failed', log: { id: 18 } }] },
+    } });
+    const data = await source.service.get();
+    assert.equal(linkedRequestCount(source), 0);
+    assert.equal(retentionRequestCount(source), 0);
+    assert.equal(data.warnings.some(warning => warning.code.startsWith('qa_run_')), false);
+  }
+});
+
+test('retention policy is fetched once per scan and re-read on refresh', async () => {
+  const source = fixture([createRun(), createRun({ id: 502 }), ...newerQaRuns()], {
+    qaEvidence: { 501: oldQaEvidence(), 502: oldQaEvidence({ id: 704 }) },
+    retentionPolicy, now: () => retentionNow,
+  });
+  source.setFailure('build/builds/701', 404);
+  source.setFailure('build/builds/704', 404);
+  const initial = await source.service.get();
+  assert.equal(initial.warnings.filter(warning => warning.code === 'qa_run_past_retention').length, 2);
+  assert.equal(retentionRequestCount(source), 1);
+  const callsBefore = source.calls.length;
+  assert.equal((await source.service.get()).cached, true);
+  assert.equal(source.calls.length, callsBefore);
+  source.setRetentionPolicy({ ...retentionPolicy, purgeRuns: { value: 100 } });
+  const refreshed = await source.service.get({ refresh: true });
+  assert.equal(refreshed.warnings.filter(warning => warning.code === 'qa_run_unavailable').length, 2);
+  assert.equal(refreshed.warnings.some(warning => warning.code === 'qa_run_past_retention'), false);
+  assert.equal(retentionRequestCount(source), 2);
 });
