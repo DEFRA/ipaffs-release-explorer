@@ -63,6 +63,13 @@ successful recorded deployment separate from the latest attempt. An older
 version deployed later (rollback) can be the last success. No claim is made that
 a prior version still runs after a failed deployment or an out-of-band change.
 
+Runs that failed request validation before execution do not produce missing-history
+warnings or inferred DEV namespaces. This requires a completed, failed run with
+an explicit ADO validation error and a successfully retrieved empty timeline.
+The failed run remains available through its evidence link. Failed runs with
+deployment records still contribute their actual results; missing history or
+access failures continue to produce warnings.
+
 Environment histories may also contain unrelated infrastructure deployments.
 The app uses the configured IPAFFS pipeline identities and their timelines,
 without treating a Grafana or other infrastructure deployment as an application

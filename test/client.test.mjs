@@ -82,6 +82,15 @@ test('ADO error response bodies never reach the caller', async () => {
   await assert.rejects(client.get('build/builds'), error => error.code === 'access_denied' && !error.message.includes('private-internal'));
 });
 
+test('an empty timeline response is distinct from a failed request and is not a valid history list', async () => {
+  const client = new AdoClient(config, {
+    authorization: async () => 'Bearer fixture',
+    fetchImpl: async () => new Response(null, { status: 204 }),
+  });
+  assert.deepEqual(await client.get('build/builds/501/timeline'), { data: null, continuation: null });
+  await assert.rejects(client.list('build/builds'), error => error.code === 'invalid_response');
+});
+
 test('organization configuration rejects credential destinations outside ADO', () => {
   for (const value of ['http://dev.azure.com/example', 'https://dev.azure.com.example.invalid/org', 'https://example.invalid/', 'https://user:password@dev.azure.com/org']) {
     assert.throws(() => loadConfig({ ADO_ORGANIZATION: value }));
