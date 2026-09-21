@@ -22,6 +22,16 @@ values=(
 helm lint "$chart" --strict "${values[@]}"
 helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
   "${values[@]}" > "$temp_dir/rendered.yaml"
+dev_url_values=(
+  --set-string devUrls.b2c=https://notifications.dev.example.test
+  --set-string devUrls.b2b=https://notifications-int.dev.example.test/notifications
+)
+helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
+  "${values[@]}" "${dev_url_values[@]}" > "$temp_dir/dev-urls.yaml"
+helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
+  "${values[@]}" "${dev_url_values[@]}" \
+  --set-string devUrls.b2b=https://notifications-int-next.dev.example.test/notifications \
+  > "$temp_dir/dev-urls-updated.yaml"
 
 # Render ingress with a different release name to verify it routes to the chart's Service.
 ingress_values=(--set ingress.enabled=true --set-string ingress.host=explorer.dev.example.test)
@@ -47,6 +57,22 @@ const allowedHosts = yaml => {
   const config = resource(yaml, 'ConfigMap');
   return JSON.parse(config.match(/^  ALLOWED_HOSTS: (.+)$/m)[1]).split(',');
 };
+const configValue = (yaml, name) => JSON.parse(resource(yaml, 'ConfigMap').match(new RegExp(`^  ${name}: (.+)$`, 'm'))[1]);
+const configChecksum = yaml => resource(yaml, 'Deployment').match(/^        checksum\/config: (.+)$/m)[1];
+
+const baseline = read('rendered.yaml');
+for (const name of ['DEV_B2C_URL', 'DEV_B2B_URL']) {
+  assert.equal(configValue(baseline, name), '', 'Canonical DEV links must have no public defaults');
+}
+const configuredUrls = read('dev-urls.yaml');
+assert.equal(configValue(configuredUrls, 'DEV_B2C_URL'), 'https://notifications.dev.example.test');
+assert.equal(configValue(configuredUrls, 'DEV_B2B_URL'), 'https://notifications-int.dev.example.test/notifications');
+assert.notEqual(configChecksum(baseline), configChecksum(configuredUrls),
+  'Configuring canonical DEV links must trigger a rollout');
+assert.notEqual(configChecksum(configuredUrls), configChecksum(read('dev-urls-updated.yaml')),
+  'Changing a canonical DEV link must trigger a rollout');
+assert.deepEqual(allowedHosts(configuredUrls), allowedHosts(baseline),
+  'Application launch links must not change the dashboard host allowlist');
 
 for (const name of ['rendered.yaml', 'disabled-ingress.yaml']) {
   const yaml = read(name);
@@ -106,4 +132,24 @@ for invalid_host in '' localhost https://explorer.dev.example.test explorer.dev.
 done
 expect_invalid_ingress --set-string ingress.className=Invalid_Class
 expect_invalid_ingress --set-string ingress.tlsSecretName=Invalid_Secret
-echo 'Chart lint, routing, TLS, host allowlist and required configuration checks passed.'
+
+# Canonical DEV links are optional, but a configured pair must be safe to expose.
+expect_invalid_dev_urls() {
+  if helm template invalid "$chart" "${values[@]}" "${dev_url_values[@]}" "$@" >/dev/null 2>&1; then
+    echo 'Invalid canonical DEV URL configuration unexpectedly passed chart validation.' >&2
+    exit 1
+  fi
+}
+for key in b2c b2b; do
+  for invalid_url in '' http://notifications.dev.example.test \
+    https://user:password@notifications.dev.example.test \
+    'https://notifications.dev.example.test?token=example' \
+    'https://notifications.dev.example.test/#fragment' \
+    'https://notifications.dev.example.test/path with spaces' \
+    'https://notifications.dev.example.test/path\backslash'; do
+    # --set-file preserves backslashes and whitespace for validation.
+    printf '%s' "$invalid_url" > "$temp_dir/invalid-dev-url.txt"
+    expect_invalid_dev_urls --set-file "devUrls.${key}=$temp_dir/invalid-dev-url.txt"
+  done
+done
+echo 'Chart lint, routing, TLS, host allowlist, canonical DEV links and required configuration checks passed.'

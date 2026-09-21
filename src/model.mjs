@@ -315,7 +315,7 @@ function candidateProgress(candidate, runs, allDeployments, getDetail, runsById,
   });
 }
 
-export function buildDashboard({ builds = [], details = new Map(), environments = [], environmentRecords = [], organization = '', project = '', fetchedAt = new Date().toISOString(), limits = {}, warnings = [], qaAvailability = new Map() } = {}) {
+export function buildDashboard({ builds = [], details = new Map(), environments = [], environmentRecords = [], organization = '', project = '', fetchedAt = new Date().toISOString(), limits = {}, warnings = [], qaAvailability = new Map(), devUrls = null } = {}) {
   const runs = builds.map(build => normalizeRun(build, organization, project)).sort((a, b) => time(b.queuedAt) - time(a.queuedAt));
   const runsById = new Map(runs.map(run => [run.id, run]));
   const kindById = new Map(builds.map(build => [Number(build.id), build._kind]));
@@ -401,7 +401,14 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
   }).sort(versionDescending);
   for (const release of releases) release.progress = candidateProgress(release, runs, allDeployments, getDetail, runsById, kindById);
   const envRows = CANONICAL.map(name => ({ name, namespace: name.toLowerCase(), ...lastStates(allDeployments.filter(item => item.environment === name && item.namespace === name.toLowerCase()), runsById) }));
-  const namespaces = [...namespaceInfo.values()].map(item => ({ ...item, access: namespaceAccessByName.get(item.name) || null, ...lastStates(allDeployments.filter(deployment => deployment.environment === 'DEV' && deployment.namespace === item.name), runsById) })).sort((a, b) => a.name === 'dev' ? -1 : b.name === 'dev' ? 1 : a.name.localeCompare(b.name));
+  const canonicalAccess = devUrls ? { source: 'configured', links: [
+    { kind: 'b2c-base', label: 'B2C', url: devUrls.b2c },
+    { kind: 'b2b-base', label: 'B2B', url: devUrls.b2b },
+  ], evidence: [] } : null;
+  const namespaces = [...namespaceInfo.values()].map(item => ({ ...item,
+    access: item.name === 'dev' && canonicalAccess ? canonicalAccess : namespaceAccessByName.get(item.name) || null,
+    ...lastStates(allDeployments.filter(deployment => deployment.environment === 'DEV' && deployment.namespace === item.name), runsById),
+  })).sort((a, b) => a.name === 'dev' ? -1 : b.name === 'dev' ? 1 : a.name.localeCompare(b.name));
   const warningRows = [...warnings];
   if (missingTimelines) warningRows.push({ code: 'TIMELINE_COVERAGE', message: `${missingTimelines} run(s) have no loaded timeline; deployment and release evidence may be incomplete.` });
   if (inferredNamespaces) warningRows.push({ code: 'INFERRED_DEV_NAMESPACE', message: `${inferredNamespaces} DEV namespace mapping(s) are inferred from branch naming because a successful resolver log was unavailable.` });

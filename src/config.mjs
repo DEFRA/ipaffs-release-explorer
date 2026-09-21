@@ -1,3 +1,25 @@
+function canonicalDevUrls(env) {
+  const names = ['DEV_B2C_URL', 'DEV_B2B_URL'];
+  if (names.every(name => !env[name])) return null;
+  const urls = names.map(name => {
+    const value = env[name];
+    // These are public entry points, not request templates. Reject credentials,
+    // query/fragment data and malformed input that URL() would silently repair.
+    if (typeof value !== 'string' || !/^https:\/\/[^/?#@]+(?:\/.*)?$/i.test(value)
+      || /[\s\u0000-\u001f\u007f\\?#]/.test(value)) {
+      throw new Error(`${name} must be an HTTPS URL without credentials, query or fragment. Configure both DEV URLs together.`);
+    }
+    try {
+      const url = new URL(value);
+      if (url.protocol !== 'https:' || !url.hostname || url.username || url.password) throw new Error('Invalid URL');
+      return url.href;
+    } catch {
+      throw new Error(`${name} must be a valid HTTPS URL. Configure both DEV URLs together.`);
+    }
+  });
+  return { b2c: urls[0], b2b: urls[1] };
+}
+
 export function loadConfig(env = process.env) {
   const organization = (env.ADO_ORGANIZATION || '').replace(/\/$/, '');
   if (!/^https:\/\/dev\.azure\.com\/[A-Za-z0-9_-]+$/.test(organization)) {
@@ -32,6 +54,7 @@ export function loadConfig(env = process.env) {
       qa: integer('ADO_QA_PIPELINE_ID'),
     },
     environmentNames: ['DEV', 'TST', 'PRE', 'PRD'],
+    devUrls: canonicalDevUrls(env),
     runsPerPipeline: integer('ADO_RUNS_PER_PIPELINE', 100, 1, 100),
     cacheSeconds: integer('ADO_CACHE_SECONDS', 90, 10, 3600),
     host,

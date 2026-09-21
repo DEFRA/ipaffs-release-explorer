@@ -37,9 +37,22 @@ public repository. Populate it from your existing DEV configuration:
 | `ADO_CREATE_RELEASE_PIPELINE_ID` | Release creation pipeline ID |
 | `ADO_RELEASE_PIPELINE_ID` | Release deployment pipeline ID |
 | `ADO_QA_PIPELINE_ID` | QA pipeline ID |
+| `DEV_B2C_URL` | Optional canonical DEV public-facing frontend HTTPS URL; set together with `DEV_B2B_URL` |
+| `DEV_B2B_URL` | Optional canonical DEV internal frontend HTTPS URL; set together with `DEV_B2C_URL` |
 
 Identity IDs are outputs of the deployment job. Do not add them to the variable
 group; the pipeline obtains them from Azure on every deployment.
+
+The canonical `dev` namespace can use frontend addresses that differ from the
+AKS proxy URLs recorded by older pipelines. Configure both `DEV_B2C_URL` and
+`DEV_B2B_URL` in this group to override its launch links. The pipeline passes
+them through Helm's `devUrls.b2c` and `devUrls.b2b` values. These are navigation
+links only, not new ingress routes or API destinations. They are shown exactly
+as configured, without adding notification paths. Branch and release namespaces
+continue to use their recorded URLs. Leave both unset to use recorded URLs for
+all namespaces; partial or invalid URL configuration is rejected. URLs must use
+HTTPS without credentials, query strings or fragments. Keep real URLs out of
+the public chart, fixtures and repository.
 
 The pipeline uses ADO deployment environment `DEV` and image repository
 `ipaffs/ipaffs-release-explorer`. Actual ADO settings are injected during deployment

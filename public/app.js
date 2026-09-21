@@ -474,15 +474,20 @@ function openNamespace(namespace) {
       link.append(node('span', '', link.href));
       list.append(link);
     });
-    append(launchSection, list, node('p', 'drawer-note', 'These URLs were recorded by the deployment pipeline. Availability has not been checked.'), detailFields([
-      ['Source run', namespace.access.runId ? `#${namespace.access.runId}` : 'Not recorded'],
-      ['URLs recorded', date(namespace.access.observedAt, true)],
-    ]));
+    launchSection.append(list);
+    if (namespace.access.source === 'configured') {
+      launchSection.append(node('p', 'drawer-note', 'Configured canonical DEV addresses. Availability has not been checked.'));
+    } else {
+      append(launchSection, node('p', 'drawer-note', 'These URLs were recorded by the deployment pipeline. Availability has not been checked.'), detailFields([
+        ['Source run', namespace.access.runId ? `#${namespace.access.runId}` : 'Not recorded'],
+        ['URLs recorded', date(namespace.access.observedAt, true)],
+      ]));
+    }
   } else launchSection.append(node('p', 'drawer-note', 'No application URLs were recorded in the available pipeline logs.'));
   content.append(launchSection);
   if (namespace.lastSuccess) content.append(button('Inspect last successful deployment', 'button secondary', () => openDeployment(namespace.lastSuccess, 'DEV')));
   if (namespace.latestAttempt && namespace.latestAttempt.runId !== namespace.lastSuccess?.runId) content.append(append(node('div', 'actions'), button('Inspect latest attempt', 'button secondary', () => openDeployment(namespace.latestAttempt, 'DEV'))));
-  if (links.length) content.append(evidenceLinks(namespace.access.evidence));
+  if (links.length && array(namespace.access.evidence).length) content.append(evidenceLinks(namespace.access.evidence));
 }
 
 function openRelease(release) {
