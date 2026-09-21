@@ -25,6 +25,12 @@ ado:
   runsPerPipeline: 100
   cacheSeconds: 90
 
+# Optional public-facing URLs for the canonical dev namespace; configure both together.
+# Other namespaces continue to use the URLs recorded by their deployment runs.
+devUrls:
+  b2c: ""
+  b2b: ""
+
 # Explicit host headers only. The chart also permits its own Service DNS names.
 allowedHosts:
   - 127.0.0.1:4317

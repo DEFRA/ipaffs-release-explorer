@@ -19,7 +19,7 @@ const createRun = (overrides = {}) => ({
   queueTime: changedAt, startTime: changedAt, finishTime: changedAt, ...overrides,
 });
 
-function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {}, logs = {}, qaEvidence = {}, retentionPolicy, now } = {}) {
+function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {}, logs = {}, qaEvidence = {}, retentionPolicy, now, devUrls = null } = {}) {
   let runs = initialRuns;
   let policy = retentionPolicy;
   const failures = new Map();
@@ -72,7 +72,7 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelin
     },
   });
   return {
-    service: createDashboardService(config, client, now ? { now } : undefined), calls,
+    service: createDashboardService({ ...config, devUrls }, client, now ? { now } : undefined), calls,
     setRuns(next) { runs = next; },
     setRetentionPolicy(next) { policy = next; },
     setFailure(path, status = 500) { if (path) failures.set(path, status); else failures.clear(); },
@@ -111,6 +111,18 @@ test('namespace launch URLs load from selected ADO task logs without fetching ap
     assert.ok(source.calls.every(url => url.hostname === 'dev.azure.com'));
     assertOnlyApiRequests(source.calls);
   }
+});
+
+test('dashboard applies configured canonical DEV links without requesting application destinations', async () => {
+  const run = createRun({ definition: { id: config.pipelines.dev, name: 'Deploy DEV' } });
+  const records = [{ id: 'resolver', type: 'Task', name: 'Resolve namespace', state: 'completed', result: 'succeeded', log: { id: 20 } }];
+  const devUrls = { b2c: 'https://public.example.invalid/', b2b: 'https://internal.example.invalid/' };
+  const source = fixture([run], { timelines: { 501: { records } }, logs: { 20: 'Using namespace: dev\n' }, devUrls });
+  const data = await source.service.get();
+  assert.equal(data.namespaces[0].access.source, 'configured');
+  assert.deepEqual(data.namespaces[0].access.links.map(link => link.url), [devUrls.b2c, devUrls.b2b]);
+  assert.ok(source.calls.every(url => url.hostname === 'dev.azure.com'));
+  assertOnlyApiRequests(source.calls);
 });
 
 test('API status excludes abandoned and canceled creation while genuine candidates awaiting deployment remain visible', async () => {

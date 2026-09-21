@@ -153,6 +153,8 @@ stages:
                         ADO_CREATE_RELEASE_PIPELINE_ID: $(ADO_CREATE_RELEASE_PIPELINE_ID)
                         ADO_RELEASE_PIPELINE_ID: $(ADO_RELEASE_PIPELINE_ID)
                         ADO_QA_PIPELINE_ID: $(ADO_QA_PIPELINE_ID)
+                        DEV_B2C_URL: $(DEV_B2C_URL)
+                        DEV_B2B_URL: $(DEV_B2B_URL)
                         INGRESS_HOST: $(ingressHost)
                         INGRESS_SKIP_TLS_VERIFY: $(ingressSkipTlsVerify)
                         ARTIFACT_DIR: $(Pipeline.Workspace)/release-explorer

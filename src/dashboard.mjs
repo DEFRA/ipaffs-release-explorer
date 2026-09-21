@@ -120,7 +120,7 @@ export function createDashboardService(config, client, { now = Date.now } = {}) 
       pipelines: lists.map(list => ({ kind: list.kind, count: list.items.length, limited: list.limited })),
       apiRequests: client.requests - callsBefore,
     };
-    const dashboard = buildDashboard({ builds, details, environments, environmentRecords, organization: config.organization, project: config.project, fetchedAt, limits, warnings, qaAvailability });
+    const dashboard = buildDashboard({ builds, details, environments, environmentRecords, organization: config.organization, project: config.project, fetchedAt, limits, warnings, qaAvailability, devUrls: config.devUrls });
     lastDetails = details;
     lastBuilds = builds;
     cached = dashboard;

@@ -228,6 +228,39 @@ test('a mapped namespace without a recorded URL summary has no invented links', 
   assert.equal(data.namespaces[0].access, null);
 });
 
+test('configured canonical DEV entry points replace logged proxy URLs without inventing notification paths or provenance', () => {
+  const devUrls = { b2c: 'https://public.example.invalid/', b2b: 'https://internal.example.invalid/start' };
+  for (const source of [detail(chartTimeline('DEV')), accessDetail({ namespace: 'dev' })]) {
+    const data = model([devBuild(1)], [[1, source]], { devUrls });
+    assert.equal(data.namespaces[0].name, 'dev');
+    assert.deepEqual(data.namespaces[0].access, { source: 'configured', links: [
+      { kind: 'b2c-base', label: 'B2C', url: devUrls.b2c },
+      { kind: 'b2b-base', label: 'B2B', url: devUrls.b2b },
+    ], evidence: [] });
+  }
+});
+
+test('configured canonical DEV URLs leave branch and release namespace links unchanged', () => {
+  const builds = [devBuild(1, { sourceBranch: 'refs/heads/feature/example' }), devBuild(2, { sourceBranch: 'refs/heads/RELEASE/4.2.x' })];
+  const entries = [[1, accessDetail()], [2, accessDetail({ namespace: '4-2-x' })]];
+  const unchanged = model(builds, entries);
+  const configured = model(builds, entries, { devUrls: { b2c: 'https://public.example.invalid/', b2b: 'https://internal.example.invalid/' } });
+  assert.deepEqual(configured.namespaces, unchanged.namespaces);
+});
+
+test('canonical DEV keeps recorded URLs when no configured pair is provided', () => {
+  const data = model([devBuild(1)], [[1, accessDetail({ namespace: 'dev' })]]);
+  assert.equal(data.namespaces[0].access.links.length, 4);
+  assert.equal(data.namespaces[0].access.runId, 1);
+  assert.equal(data.namespaces[0].access.source, undefined);
+});
+
+test('canonical DEV configuration does not invent a namespace when no mapped run exists', () => {
+  const data = model([devBuild(1, { sourceBranch: 'refs/heads/feature/unknown' })], [[1, detail(chartTimeline('DEV'))]],
+    { devUrls: { b2c: 'https://public.example.invalid/', b2b: 'https://internal.example.invalid/' } });
+  assert.deepEqual(data.namespaces, []);
+});
+
 test('QA child extraction handles timestamps and requires structured pipeline identity', () => {
   const json = JSON.stringify({ id: 503, name: 'TST--20350309.2', pipeline: { id: 104 } }, null, 2).split('\n').map(line => `2035-03-09T12:51:00.1Z ${line}`).join('\n');
   assert.deepEqual(parseQaRunEvidence(`Starting task\n${json}\nFinished task`), { id: 503, pipelineId: 104 });

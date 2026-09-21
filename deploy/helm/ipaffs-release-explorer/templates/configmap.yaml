@@ -23,3 +23,5 @@ data:
   ADO_QA_PIPELINE_ID: {{ .Values.ado.pipelines.qa | quote }}
   ADO_RUNS_PER_PIPELINE: {{ .Values.ado.runsPerPipeline | quote }}
   ADO_CACHE_SECONDS: {{ .Values.ado.cacheSeconds | quote }}
+  DEV_B2C_URL: {{ .Values.devUrls.b2c | quote }}
+  DEV_B2B_URL: {{ .Values.devUrls.b2b | quote }}

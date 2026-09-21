@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["replicaCount", "image", "serviceAccount", "workloadIdentity", "ado", "allowedHosts", "ingress", "resources"],
+  "required": ["replicaCount", "image", "serviceAccount", "workloadIdentity", "ado", "devUrls", "allowedHosts", "ingress", "resources"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 1, "maximum": 3},
     "image": {
@@ -49,6 +49,19 @@
         "runsPerPipeline": {"type": "integer", "minimum": 1, "maximum": 100},
         "cacheSeconds": {"type": "integer", "minimum": 10, "maximum": 3600}
       },
+      "additionalProperties": false
+    },
+    "devUrls": {
+      "type": "object",
+      "required": ["b2c", "b2b"],
+      "properties": {
+        "b2c": {"type": "string", "pattern": "^$|^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[^?#\\s\\\\]*)?$"},
+        "b2b": {"type": "string", "pattern": "^$|^https://[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?(:[0-9]{1,5})?(/[^?#\\s\\\\]*)?$"}
+      },
+      "oneOf": [
+        {"properties": {"b2c": {"const": ""}, "b2b": {"const": ""}}},
+        {"properties": {"b2c": {"minLength": 1}, "b2b": {"minLength": 1}}}
+      ],
       "additionalProperties": false
     },
     "allowedHosts": {

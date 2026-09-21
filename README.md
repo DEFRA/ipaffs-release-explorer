@@ -73,6 +73,15 @@ does not publish URLs. A namespace without a matching summary shows **No URLs
 recorded**; hostnames are never guessed. Both the older **Publish namespace access
 URLs** task and the newer **Generate namespace URLs** task are supported.
 
+For canonical `dev`, set both `DEV_B2C_URL` and `DEV_B2B_URL` when its frontend
+addresses differ from the recorded AKS proxy addresses. Those exact configured
+URLs replace the canonical namespace's recorded launch links and are labelled
+as configuration, without a pipeline source date. No notification path is
+added. Branch and release namespaces still use their recorded URLs. With both
+settings absent, all namespaces use the existing log-based behavior. For AKS,
+keep the real URLs in the `ReleaseExplorerDEV` variable group; Helm injects
+them at deployment time.
+
 Launch links must come from a successful DEV publishing task and job, match the
 mapped namespace, and use HTTPS without embedded credentials, query strings or
 fragments. The server reads the existing ADO logs only; it does not contact the
