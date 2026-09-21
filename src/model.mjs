@@ -8,10 +8,10 @@ const taggedVersion = ref => fullVersion(String(ref || '').replace(/^refs\/tags\
 const refBranch = ref => String(ref || '').startsWith('refs/heads/') ? ref.slice(11) : null;
 const isSuccess = record => record?.state === 'completed' && record?.result === 'succeeded';
 const recordStatus = record => record?.result || record?.state || 'unknown';
-// Abandoning a completed run can leave the public Build API result successful.
-// The current run-page state is checked separately. A canceled stage alone is
-// not evidence that the whole run was abandoned.
-const isAbandonedRun = run => run.abandonment === 'abandoned' || run.status === 16 || [run.result, run.status].some(value =>
+// Build summary status takes precedence over the original execution result.
+// A canceled stage alone is not evidence that the whole run was abandoned.
+const isAbandonedStatus = status => status === 16 || String(status || '').toLowerCase() === 'abandoned';
+const isAbandonedRun = run => isAbandonedStatus(run.status) || [run.result, run.status].some(value =>
   ['canceled', 'cancelled', 'canceling', 'cancelling', 'abandoned'].includes(String(value || '').toLowerCase()));
 const attempt = record => Number(record?.attempt || 1);
 const validNamespace = value => typeof value === 'string' && value.length <= 63 && /^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?$/.test(value);
@@ -27,7 +27,7 @@ function normalizeRun(build, organization, project) {
     pipelineId: Number(build.definition?.id), buildNumber: build.buildNumber || null,
     sourceRef: build.sourceBranch || null, commit: build.sourceVersion || null,
     status: build.status || 'unknown', result: build.result || null,
-    abandonment: build._abandonment || null,
+    abandonment: isAbandonedStatus(build.status) ? 'abandoned' : null,
     queuedAt: build.queueTime || null, startedAt: build.startTime || null,
     finishedAt: build.finishTime || null, url: runUrl(build, organization, project),
   };
@@ -197,7 +197,6 @@ function progressForRun(run, environment, deployments, detail, runsById) {
     evidence: event?.evidence || [evidence(record ? `ADO stage: ${record.name || record.identifier}` : 'Matching ADO pipeline run', record ? recordUrl(run, record) : run.url, record ? 'timeline' : 'run')],
     orderTime: time(event?.finishedAt || event?.startedAt) || time(record?.finishTime || record?.startTime) || time(run.queuedAt),
   });
-  if (run.abandonment === 'unknown') return observation('unknown', 'Unknown', 'The current ADO run state could not be verified, so this run is not being used as deployment evidence.', null, null);
   if (!records.length) return observation('unknown', 'Unknown', 'A matching run exists, but its timeline is unavailable in this snapshot.', null, null);
   if (environment === 'DEV' && !deployments.length) return observation('unknown', 'Unknown', 'A run for this exact commit exists, but retained evidence does not confirm its DEV deployment and resolved namespace.', null, null);
   if (current?.status === 'succeeded') return observation('deployed', environment === 'DEV' ? 'Commit deployed' : 'Deployed', environment === 'DEV'
@@ -253,7 +252,6 @@ function candidateProgress(candidate, runs, allDeployments, getDetail, runsById,
     if (!matchingRuns.length) return empty;
     const matchingIds = new Set(matchingRuns.map(run => run.id));
     const deployments = allDeployments.filter(item => item.environment === environment && matchingIds.has(item.runId)
-      && runsById.get(item.runId)?.abandonment !== 'unknown'
       && (!dev || (validNamespace(item.namespace) && item.namespaceConfidence === 'recorded')));
     const states = lastStates(deployments, runsById);
     const observations = matchingRuns.map(run => progressForRun(run, environment, deployments.filter(item => item.runId === run.id), getDetail(run.id), runsById));
@@ -296,7 +294,7 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
         // A successful recorded task is preferred. Older retained runs may have only
         // successful job records, which still bound the exact post-push log evidence.
         const job = records.find(item => item.type === 'Job' && /(?:^|\.)CreateBranchAndTag(?:\.|$)/.test(item.identifier || ''));
-        if (!(isSuccess(record) || (!record && isSuccess(job))) || run.result !== 'succeeded' || isAbandonedRun(run) || run.abandonment === 'unknown') continue;
+        if (!(isSuccess(record) || (!record && isSuccess(job))) || run.result !== 'succeeded' || isAbandonedRun(run)) continue;
         for (const item of parseReleaseEvidence(log.text)) releaseCandidates.push({
           ...item, branch: item.branch || refBranch(run.sourceRef), observedAt: record?.finishTime || job?.finishTime || run.finishedAt,
           runId: run.id, url: run.url, evidence: [evidence(item.outcome === 'created' ? 'Successful tag creation log' : 'Successful existing-tag check log', logUrl(run, log), 'log')],
@@ -311,6 +309,7 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
       if (!child) continue;
       const childRun = runsById.get(child.id);
       run.qaLinks.push({ ...child, status: childRun?.status || 'unknown', result: childRun?.result || null,
+        abandonment: childRun?.abandonment || null,
         url: childRun?.url || runUrl({ id: child.id }, organization, project), revisionVerified: false,
         evidence: [evidence('QA run ID from successful queue task', logUrl(run, log), 'log')] });
     }

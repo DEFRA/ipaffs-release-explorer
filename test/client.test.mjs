@@ -45,6 +45,7 @@ test('pagination follows continuation tokens and reports a bounded scan', async 
   assert.equal(list.limited, true);
   assert.equal(calls[1].searchParams.get('continuationToken'), 'page-1');
   assert.equal(calls[1].searchParams.get('$top'), '1');
+  assert.ok(calls.every(url => url.searchParams.get('api-version') === '7.2-preview.8'));
 });
 
 test('Environment deployment records use the documented top parameter', async () => {
@@ -87,67 +88,51 @@ test('organization configuration rejects credential destinations outside ADO', (
   }
 });
 
-const runPage = (run = {}, { asObject = false, attributes = 'id="dataProviders" type="application/json"' } = {}) => {
-  const provider = { id: 501, pipeline: { id: 102 }, status: 16, result: 2, headerPills: ['Abandoned'], privateData: 'must-not-be-returned', ...run };
-  return `<html><script>throw new Error('must-not-execute')</script><script ${attributes}>${JSON.stringify({ data: { 'ms.vss-build-web.run-details-data-provider': asObject ? provider : JSON.stringify(provider) } })}</script></html>`;
-};
 
-test('current run status uses a fixed authenticated GET and returns only verified identifiers and state', async () => {
+test('only Build summary endpoints use the API version exposing abandoned status', async () => {
   const calls = [];
   const client = new AdoClient(config, {
-    authorization: async () => 'Bearer fixture-private-token',
+    authorization: async () => 'Bearer fixture',
     fetchImpl: async (url, options) => {
-      calls.push(url);
-      assert.equal(url.href, 'https://dev.azure.com/example-org/example-project/_build/results?buildId=501');
-      assert.equal(options.method, 'GET');
-      assert.equal(options.redirect, 'error');
-      assert.equal(options.headers.Accept, 'text/html');
-      assert.equal(options.headers.Authorization, 'Bearer fixture-private-token');
-      return new Response(runPage());
+      calls.push({ path: url.pathname.split('/_apis/')[1], version: url.searchParams.get('api-version'), accept: options.headers.Accept });
+      return new Response(JSON.stringify({ value: [] }));
     },
   });
-  // The page's Abandoned state takes precedence even though its result remains success (2).
-  assert.deepEqual(await client.getRunStatus(501, 102), { id: 501, pipelineId: 102, status: 16 });
-  assert.equal(client.requests, 1);
-  for (const [id, pipeline] of [['https://example.invalid', 102], [0, 102], [501, '../123'], [501, NaN]]) {
-    await assert.rejects(client.getRunStatus(id, pipeline), /Invalid ADO run identifiers/);
-  }
-  assert.equal(calls.length, 1);
+  await client.list('build/builds', { definitions: 102 }, 100);
+  await client.get('build/builds/501');
+  await client.get('build/builds/501/timeline');
+  await client.get('build/builds/501/logs/17', {}, { text: true });
+  await client.list('distributedtask/environments', { 'api-version': '7.1-preview.1' });
+  await client.list('distributedtask/environments/202/environmentdeploymentrecords', { 'api-version': '7.1-preview.1' }, 20);
+  assert.deepEqual(calls, [
+    { path: 'build/builds', version: '7.2-preview.8', accept: 'application/json' },
+    { path: 'build/builds/501', version: '7.2-preview.8', accept: 'application/json' },
+    { path: 'build/builds/501/timeline', version: '7.1', accept: 'application/json' },
+    { path: 'build/builds/501/logs/17', version: '7.1', accept: 'text/plain' },
+    { path: 'distributedtask/environments', version: '7.1-preview.1', accept: 'application/json' },
+    { path: 'distributedtask/environments/202/environmentdeploymentrecords', version: '7.1-preview.1', accept: 'application/json' },
+  ]);
 });
 
-test('run status accepts a JSON object provider and supported attribute order without reading display pills', async () => {
+test('a Build summary error does not fall back to an older API version or an HTML page', async () => {
+  const calls = [];
   const client = new AdoClient(config, {
     authorization: async () => 'Bearer fixture',
-    fetchImpl: async () => new Response(runPage({ status: 2, headerPills: ['Abandoned'] }, { asObject: true, attributes: "type='application/json' nonce='fixture' id='dataProviders'" })),
+    fetchImpl: async url => {
+      calls.push(url.href);
+      return new Response('private-upstream-details', { status: 400 });
+    },
   });
-  assert.deepEqual(await client.getRunStatus(501, 102), { id: 501, pipelineId: 102, status: 2 });
+  await assert.rejects(client.list('build/builds'), error => error.code === 'ado_response_error' && !error.message.includes('private-upstream-details'));
+  assert.deepEqual(calls, ['https://dev.azure.com/example-org/example-project/_apis/build/builds?api-version=7.2-preview.8&%24top=100']);
 });
 
-test('unmatched, malformed, or unknown run-page data cannot establish a run state', async () => {
-  const pages = [
-    runPage({ id: 502 }), runPage({ pipeline: { id: 103 } }),
-    runPage({ status: '16' }), runPage({ status: 3 }), runPage({ status: 0 }), runPage({ status: 63 }),
-    runPage({}, { attributes: 'id="dataProviders" type="text/javascript"' }),
-    runPage({}, { attributes: 'data-id="dataProviders" type="application/json"' }),
-    runPage() + runPage(),
-    '<script id="dataProviders" type="application/json">private-malformed-page</script>',
-    '<html><p>Abandoned</p></html>',
-    '<script id="dataProviders" type="application/json">{"data":{"ms.vss-build-web.run-details-data-provider":"not-json-private"}}</script>',
-  ];
-  for (const page of pages) {
-    const client = new AdoClient(config, {
-      authorization: async () => 'Bearer fixture', fetchImpl: async () => new Response(page),
-    });
-    await assert.rejects(client.getRunStatus(501, 102), error => error.code === 'invalid_run_state' && !error.message.includes('private'));
-  }
-});
-
-test('run-page response size is bounded and access errors never expose HTML', async () => {
+test('API response size is bounded and malformed responses do not expose their content', async () => {
   for (const [response, code] of [
-    [new Response('private-page'.repeat(200000)), 'response_too_large'],
-    [new Response('private-page', { status: 403 }), 'access_denied'],
+    [new Response('x'.repeat(12 * 1024 * 1024 + 1)), 'response_too_large'],
+    [new Response('private-malformed-response'), 'invalid_response'],
   ]) {
     const client = new AdoClient(config, { authorization: async () => 'Bearer fixture', fetchImpl: async () => response });
-    await assert.rejects(client.getRunStatus(501, 102), error => error.code === code && !error.message.includes('private-page'));
+    await assert.rejects(client.get('build/builds'), error => error.code === code && !error.message.includes('private-malformed-response'));
   }
 });

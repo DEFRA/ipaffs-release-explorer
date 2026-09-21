@@ -5,29 +5,9 @@ import { promisify } from 'node:util';
 
 const execute = promisify(execFile);
 const RESOURCE = '499b84ac-1321-427f-aa17-267ca6975798';
-// These are concrete BuildStatus values; None and the All filter are not a
-// verified current state. The run page preserves Abandoned after completion.
-const RUN_STATUSES = new Set([1, 2, 4, 8, 16, 32]);
-
-function parseRunStatus(html, runId, pipelineId) {
-  try {
-    const providers = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter(match => {
-      const attributes = [...match[1].matchAll(/(?:^|\s)(id|type)\s*=\s*(["'])(.*?)\2/gi)];
-      const ids = attributes.filter(attribute => attribute[1].toLowerCase() === 'id');
-      const types = attributes.filter(attribute => attribute[1].toLowerCase() === 'type');
-      return ids.length === 1 && ids[0][3] === 'dataProviders' && types.length === 1 && types[0][3].toLowerCase() === 'application/json';
-    });
-    if (providers.length !== 1) throw new Error('Missing run data');
-    const payload = JSON.parse(providers[0][2]);
-    const provider = payload?.data?.['ms.vss-build-web.run-details-data-provider'];
-    const run = typeof provider === 'string' ? JSON.parse(provider) : provider;
-    if (!run || run.id !== runId || run.pipeline?.id !== pipelineId || !RUN_STATUSES.has(run.status)) throw new Error('Unexpected run data');
-    // Do not expose or retain any other data embedded in the authenticated page.
-    return { id: runId, pipelineId, status: run.status };
-  } catch {
-    throw new AdoError('invalid_run_state', 'Azure DevOps did not provide a verifiable current run state.');
-  }
-}
+// This Build summary version exposes status: abandoned even when the original
+// execution result remains succeeded. Timelines and logs use their own versions.
+const BUILD_SUMMARY_API_VERSION = '7.2-preview.8';
 
 export class AdoError extends Error {
   constructor(code, message, status = 502) {
@@ -130,8 +110,7 @@ export function createTokenProvider({ env = process.env, executeFile = execute, 
 
 export class AdoClient {
   constructor(config, { fetchImpl = fetch, authorization = createTokenProvider() } = {}) {
-    this.projectBase = `${config.organization}/${encodeURIComponent(config.project)}/`;
-    this.base = `${this.projectBase}_apis/`;
+    this.base = `${config.organization}/${encodeURIComponent(config.project)}/_apis/`;
     this.fetchImpl = fetchImpl;
     this.authorization = authorization;
     this.requests = 0;
@@ -141,19 +120,9 @@ export class AdoClient {
     // This is deliberately not an arbitrary URL proxy. All network operations are GET.
     if (!/^(?:build|distributedtask)\/[A-Za-z0-9/_-]+$/.test(path)) throw new Error('Unsupported ADO API path');
     const url = new URL(path, this.base);
-    url.searchParams.set('api-version', '7.1');
+    url.searchParams.set('api-version', /^build\/builds(?:\/\d+)?$/.test(path) ? BUILD_SUMMARY_API_VERSION : '7.1');
     for (const [key, value] of Object.entries(query)) if (value !== undefined) url.searchParams.set(key, String(value));
     return this.#request(url, { accept: text ? 'text/plain' : 'application/json', text, limit: text ? 4 * 1024 * 1024 : 12 * 1024 * 1024 });
-  }
-
-  async getRunStatus(runId, pipelineId) {
-    if (![runId, pipelineId].every(value => Number.isSafeInteger(value) && value > 0)) throw new Error('Invalid ADO run identifiers');
-    // The Build API can retain completed/succeeded after a run is abandoned.
-    // Read only this fixed ADO page's JSON data; never execute its scripts.
-    const url = new URL('_build/results', this.projectBase);
-    url.searchParams.set('buildId', String(runId));
-    const { data: html } = await this.#request(url, { accept: 'text/html', text: true, limit: 2 * 1024 * 1024 });
-    return parseRunStatus(html, runId, pipelineId);
   }
 
   async #request(url, { accept, text, limit }) {

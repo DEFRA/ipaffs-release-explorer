@@ -381,7 +381,7 @@ test('an abandoned DEV run neither hides a candidate nor supplies commit deploym
 });
 
 test('abandoned Create Release runs cannot supply candidates even with retained successful tag logs', () => {
-  for (const state of [{ result: 'canceled' }, { status: 'cancelling' }, { status: 16 }, { _abandonment: 'abandoned' }]) {
+  for (const state of [{ result: 'canceled' }, { status: 'cancelling' }, { status: 16 }, { status: 'abandoned' }]) {
     const data = model([releaseBuild(1, state)], [[1, detail([releaseRecord()], [releaseLog(`Created tag '4.2.0' at ${sha}`)])]]);
     assert.deepEqual(data.releases, []);
     assert.equal(data.runs.length, 1);
@@ -390,9 +390,9 @@ test('abandoned Create Release runs cannot supply candidates even with retained 
 
 test('abandoned successful creation and no-op runs cannot resurrect a candidate for the same tag', () => {
   const data = model([
-    releaseBuild(1, { _abandonment: 'abandoned' }),
-    releaseBuild(2, { _abandonment: 'abandoned' }),
-    releaseBuild(3, { _abandonment: 'not-abandoned' }),
+    releaseBuild(1, { status: 'abandoned' }),
+    releaseBuild(2, { status: 'abandoned' }),
+    releaseBuild(3, { status: 'completed' }),
   ], [
     [1, detail([releaseRecord()], [releaseLog(`Created tag '2044.2.0' at ${sha}`)])],
     [2, detail([releaseRecord()], [releaseLog(`Commit ${sha} is already tagged '2044.2.0'. No patch tag is required.`)])],
@@ -404,24 +404,13 @@ test('abandoned successful creation and no-op runs cannot resurrect a candidate 
 });
 
 test('a completed deployment later marked abandoned cannot supply candidate progress', () => {
-  const data = candidateModel([build(1, { _abandonment: 'abandoned' }), build(2, { status: 'inProgress', result: null })], [
+  const data = candidateModel([build(1, { status: 'abandoned' }), build(2, { status: 'inProgress', result: null })], [
     [1, detail(chartTimeline('TST'))],
     [2, detail([stage('TST', { state: 'pending', result: null, startTime: null, finishTime: null })])],
   ]);
   assert.equal(progress(data, 'TST').status, 'not-started');
   assert.equal(progress(data, 'TST').lastSuccess, null);
   assert.equal(env(data, 'TST').lastSuccess.runId, 1);
-});
-
-test('unavailable current run state cannot establish candidate creation or deployment evidence', () => {
-  const unknownCreation = model([releaseBuild(1, { _abandonment: 'unknown' })], [[1, detail([releaseRecord()], [releaseLog(`Created tag '4.2.0' at ${sha}`)])]]);
-  assert.deepEqual(unknownCreation.releases, []);
-  const unknownDeployment = candidateModel([build(1, { _abandonment: 'unknown' })], [[1, detail(chartTimeline('TST'))]]);
-  assert.equal(unknownDeployment.releases.length, 1);
-  assert.equal(progress(unknownDeployment, 'TST').status, 'unknown');
-  assert.equal(progress(unknownDeployment, 'TST').lastSuccess, null);
-  assert.equal(progress(unknownDeployment, 'TST').latestAttempt, null);
-  assert.match(progress(unknownDeployment, 'TST').detail, /current ADO run state could not be verified/);
 });
 
 test('later approval failures cannot block earlier environments', () => {

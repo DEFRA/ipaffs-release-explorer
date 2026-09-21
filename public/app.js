@@ -53,7 +53,6 @@ function cleanRef(value) { return value ? String(value).replace(/^refs\/(heads|t
 function normalizedStatus(value) { return String(value || 'unknown').toLowerCase().replace(/[\s_-]/g, ''); }
 function recordStatus(record) {
   if (record?.abandonment === 'abandoned') return 'abandoned';
-  if (record?.abandonment === 'unknown') return 'unknown';
   return record?.result || record?.status || 'unknown';
 }
 
@@ -472,7 +471,7 @@ function openRun(run) {
   append(content, detailFields([
     ['Pipeline', run.pipeline], ['Build number', run.buildNumber], ['Source ref', run.sourceRef || 'Not recorded', 'mono'],
     ['Source commit', run.commit || 'Not recorded', 'mono'], ['Status', badge(recordStatus(run))],
-    ...(['abandoned', 'unknown'].includes(run.abandonment) ? [['Original execution result', badge(run.result)]] : []),
+    ...(run.abandonment === 'abandoned' ? [['Original execution result', badge(run.result)]] : []),
     ['Queued', date(run.queuedAt, true)], ['Started', date(run.startedAt, true)], ['Finished', run.finishedAt ? date(run.finishedAt, true) : 'Not finished / not recorded'],
   ]), evidenceLinks(run.evidence, run.url));
   if (array(run.qaLinks).length) renderQaLinks(run.qaLinks, content);

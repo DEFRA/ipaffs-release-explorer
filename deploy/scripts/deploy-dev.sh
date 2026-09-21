@@ -151,8 +151,8 @@ kubectl --namespace "$NAMESPACE" exec deployment/ipaffs-release-explorer -- node
     process.exit(1);
   }
   const warnings = dashboard.warnings || [];
-  if (warnings.some(w => ["run_state_unavailable", "environments_unavailable", "environment_history_unavailable"].includes(w.code))) {
-    console.error("ADO read smoke check failed: current run states or Environment history could not be verified. The identity must be able to read run pages, Environments and the Build API.");
+  if (warnings.some(w => ["environments_unavailable", "environment_history_unavailable"].includes(w.code))) {
+    console.error("ADO read smoke check failed: Environment history could not be verified. The identity must be able to read Environments and the Build API.");
     process.exit(1);
   }
   if (warnings.length) console.log(`History coverage has ${warnings.length} warning(s); inspect coverage in the dashboard.`);
