@@ -86,8 +86,9 @@ export function createDashboardService(config, client, { now = Date.now } = {}) 
           // result into a confident age classification.
           if (observations.length && observations.every(Boolean)) {
             const availability = observations.sort((a, b) => (a.ageBasis === 'queued' ? 0 : 1) - (b.ageBasis === 'queued' ? 0 : 1) || a.ageDays - b.ageDays)[0];
+            // Retention context belongs with the linked QA result, not the
+            // dashboard-wide warnings about missing coverage or access.
             qaAvailability.set(id, availability);
-            warnings.push({ code: 'qa_run_past_retention', severity: 'info', message: `Linked QA run ${id}: ${availability.label}. ${availability.detail}` });
             return;
           }
         }
