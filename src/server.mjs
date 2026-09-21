@@ -27,13 +27,20 @@ export function createAppServer(config, service) {
     const host = (request.headers.host || '').toLowerCase();
     const allowedHosts = config.allowedHosts || [`localhost:${config.port}`, `127.0.0.1:${config.port}`];
     if (!allowedHosts.includes(host)) return json(403, { error: { code: 'host_not_allowed', message: 'Open this application through its configured address.' } });
-    if (request.headers['sec-fetch-site'] === 'cross-site') return json(403, { error: { code: 'local_only', message: 'Cross-site requests are not supported.' } });
     if (request.method !== 'GET') {
       response.setHeader('Allow', 'GET');
       return json(405, { error: { code: 'read_only', message: 'This application accepts read-only GET requests only.' } });
     }
     try {
       const url = new URL(request.url, `http://${host}`);
+      // A link from another site can open the dashboard shell. Keep cross-site
+      // API reads and embedded requests blocked, even when their method is GET.
+      const pageNavigation = url.pathname === '/' &&
+        request.headers['sec-fetch-mode'] === 'navigate' &&
+        request.headers['sec-fetch-dest'] === 'document';
+      if (request.headers['sec-fetch-site'] === 'cross-site' && !pageNavigation) {
+        return json(403, { error: { code: 'local_only', message: 'Cross-site requests are not supported.' } });
+      }
       if (url.pathname === '/healthz') return json(200, { status: 'ok', readOnly: true });
       if (url.pathname === '/api/dashboard') {
         if (url.searchParams.get('mode') === 'sample') return json(200, sampleDashboard());
