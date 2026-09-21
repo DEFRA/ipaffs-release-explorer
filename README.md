@@ -1,7 +1,7 @@
 # IPAFFS Release Explorer
 
 A read-only Node app that reconstructs release history from **existing**
-ADO runs, current run-page state, timelines, selected logs and Environment records. It needs no pipeline
+ADO run summaries, timelines, selected logs and Environment records. It needs no pipeline
 changes, database, GitHub API access or Kubernetes access.
 
 This standalone repository owns the app, its container, the ADO pipeline and its
@@ -94,17 +94,23 @@ Matching uses the exact tag and commit, so abandoning another tag or revision
 does not hide the candidate. Canceled runs and their actual deployment history
 remain available in the environment overview and its evidence details.
 
-ADO can mark a completed run **Abandoned** while the public Build API continues
-to return its original successful result. For completed runs, the app also
-reads the current numeric status from the run page's JSON data provider
-([`BuildStatus.Abandoned = 16`](https://learn.microsoft.com/en-us/javascript/api/azure-devops-extension-api/buildstatus)). Only the verified run ID, pipeline ID and status
-are retained in memory; page HTML is never returned to the browser or saved.
-Status checks are cached against the build's last-changed timestamp.
+If a release was created with the wrong name, abandon its Create Release run
+in ADO to exclude that run's candidate evidence. The app does not guess that a
+syntactically valid version is a mistake because it looks unusual or has not
+yet been deployed.
 
-This page data provider is not a stable public REST contract. If the page
-format changes or the status cannot be read, the app reports a coverage warning
-and does not use that run as candidate evidence. It does not treat a missing
-status or missing deployment history as abandonment.
+ADO can mark a completed run **Abandoned** while retaining its original
+successful execution result. Build list and individual-build requests use
+`7.2-preview.8`, which exposes the `abandoned` status with managed identity
+authentication. That status takes precedence over the original result for
+candidate filtering and run display. It is re-read with each history refresh.
+The app reads API responses only; it does not fetch authenticated ADO web pages.
+
+This Build summary API version is a preview contract. If a required Build
+history request fails, the refresh reports an error instead of silently
+falling back to an older API version that may omit abandonment. Timeline, log
+and Environment requests retain their existing API versions. Missing deployment
+history alone does not hide a candidate.
 
 ## Configuration and scope
 

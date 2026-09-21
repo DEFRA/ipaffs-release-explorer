@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { AdoClient } from '../src/ado-client.mjs';
 import { createDashboardService } from '../src/dashboard.mjs';
 import { loadConfig } from '../src/config.mjs';
 
@@ -18,102 +19,120 @@ const createRun = (overrides = {}) => ({
   queueTime: changedAt, startTime: changedAt, finishTime: changedAt, ...overrides,
 });
 
-function fixture(initialRuns = [createRun()]) {
+function fixture(initialRuns = [createRun()], { versions = {}, linkedQa } = {}) {
   let runs = initialRuns;
-  let status = 16;
-  let failure = false;
-  let calls = 0;
-  const client = {
-    requests: 0,
-    async list(path, query) {
-      this.requests += 1;
-      return { items: path === 'build/builds' ? runs.filter(run => run.definition.id === query.definitions) : [], limited: false };
-    },
-    async get(path) {
-      this.requests += 1;
-      if (path.endsWith('/timeline')) return { data: { records: [{ id: 'create-task', type: 'Task', name: 'Create release branch or next patch tag', state: 'completed', result: 'succeeded', finishTime: changedAt, log: { id: 17 } }] } };
-      if (path.endsWith('/logs/17')) return { data: `Created tag '2044.2.0' at ${sha}` };
+  let failure;
+  const calls = [];
+  const client = new AdoClient(config, {
+    authorization: async () => 'Bearer fixture-workload-identity-token',
+    fetchImpl: async (url, options) => {
+      calls.push(url);
+      assert.equal(options.method, 'GET');
+      assert.equal(options.headers.Authorization, 'Bearer fixture-workload-identity-token');
+      // Authenticated web pages can fail for this identity. They are never needed.
+      if (url.pathname.includes('/_build/')) return new Response('private-page-error', { status: 500 });
+      const path = url.pathname.split('/_apis/')[1];
+      if (failure === path) return new Response('private-upstream-error', { status: 500 });
+      if (path === 'build/builds') {
+        assert.equal(url.searchParams.get('api-version'), '7.2-preview.8');
+        return Response.json({ value: runs.filter(run => run.definition.id === Number(url.searchParams.get('definitions'))) });
+      }
+      const summary = path.match(/^build\/builds\/(\d+)$/);
+      if (summary && linkedQa && Number(summary[1]) === linkedQa.id) {
+        assert.equal(url.searchParams.get('api-version'), '7.2-preview.8');
+        return Response.json(linkedQa);
+      }
+      const timeline = path.match(/^build\/builds\/(\d+)\/timeline$/);
+      if (timeline) {
+        assert.equal(url.searchParams.get('api-version'), '7.1');
+        const records = [{ id: 'create-task', type: 'Task', name: 'Create release branch or next patch tag', state: 'completed', result: 'succeeded', finishTime: changedAt, log: { id: 17 } }];
+        if (linkedQa) records.push({ id: 'qa-task', type: 'Task', name: 'Trigger QA pipeline', state: 'completed', result: 'succeeded', log: { id: 18 } });
+        return Response.json({ records });
+      }
+      const log = path.match(/^build\/builds\/(\d+)\/logs\/(\d+)$/);
+      if (log) {
+        assert.equal(url.searchParams.get('api-version'), '7.1');
+        if (Number(log[2]) === 18) return new Response(JSON.stringify({ id: linkedQa.id, definition: linkedQa.definition }));
+        return new Response(`Created tag '${versions[log[1]] || '4.2.0'}' at ${sha}`);
+      }
+      if (path === 'distributedtask/environments') return Response.json({ value: [] });
       throw new Error(`Unexpected path ${path}`);
     },
-    async getRunStatus(id, pipelineId) {
-      this.requests += 1;
-      calls += 1;
-      if (failure) throw new Error('private upstream detail');
-      return { id, pipelineId, status };
-    },
-  };
+  });
   return {
-    service: createDashboardService(config, client),
+    service: createDashboardService(config, client), calls,
     setRuns(next) { runs = next; },
-    setStatus(next) { status = next; },
-    setFailure(next) { failure = next; },
-    get calls() { return calls; },
+    setFailure(path) { failure = path; },
   };
 }
 
-test('current abandonment is passed into the model even when Build history and tag task succeeded', async () => {
-  const { service } = fixture();
-  const data = await service.get();
-  assert.equal(data.runs[0].result, 'succeeded');
-  assert.equal(data.runs[0].abandonment, 'abandoned');
-  assert.deepEqual(data.releases, []);
-  assert.equal(service.run(501).run.abandonment, 'abandoned');
-});
+function assertOnlyApiRequests(calls) {
+  assert.ok(calls.length > 0);
+  assert.ok(calls.every(url => url.pathname.includes('/_apis/')));
+  assert.equal(calls.some(url => url.pathname.includes('/_build/')), false);
+}
 
-test('verified run states are reused until lastChangedDate changes', async () => {
-  const source = fixture();
-  source.setStatus(2);
-  assert.equal((await source.service.get()).releases.length, 1);
-  assert.equal(source.calls, 1);
-  await source.service.get({ refresh: true });
-  assert.equal(source.calls, 1);
-  source.setStatus(16);
-  source.setRuns([createRun({ lastChangedDate: '2035-03-15T13:00:00Z' })]);
-  const abandoned = await source.service.get({ refresh: true });
-  assert.equal(source.calls, 2);
-  assert.deepEqual(abandoned.releases, []);
-  assert.equal(abandoned.runs[0].abandonment, 'abandoned');
-});
-
-test('missing change timestamps skip state caching and states outside the snapshot are pruned', async () => {
-  const source = fixture([createRun({ lastChangedDate: undefined })]);
-  await source.service.get();
-  await source.service.get({ refresh: true });
-  assert.equal(source.calls, 2);
-  source.setRuns([createRun()]);
-  await source.service.get({ refresh: true });
-  assert.equal(source.calls, 3);
-  source.setRuns([]);
-  await source.service.get({ refresh: true });
-  source.setRuns([createRun()]);
-  await source.service.get({ refresh: true });
-  assert.equal(source.calls, 4);
-});
-
-test('state failures are explicit and are retried instead of caching uncertainty', async () => {
-  const source = fixture();
-  source.setFailure(true);
-  const uncertain = await source.service.get();
-  assert.equal(uncertain.runs[0].abandonment, 'unknown');
-  assert.deepEqual(uncertain.releases, []);
-  assert.ok(uncertain.warnings.some(warning => warning.code === 'run_state_unavailable'));
-  assert.equal(JSON.stringify(uncertain).includes('private upstream detail'), false);
-  source.setFailure(false);
-  source.setStatus(2);
-  const recovered = await source.service.get({ refresh: true });
-  assert.equal(source.calls, 2);
-  assert.equal(recovered.runs[0].abandonment, 'not-abandoned');
-  assert.equal(recovered.releases.length, 1);
-  assert.equal(recovered.warnings.some(warning => warning.code === 'run_state_unavailable'), false);
-});
-
-test('QA, active runs, and runs already canceled do not make supplemental page requests', async () => {
+test('API status excludes abandoned and canceled creation while genuine candidates awaiting deployment remain visible', async () => {
   const source = fixture([
-    createRun({ id: 1, status: 'inProgress', result: null }),
-    createRun({ id: 2, result: 'canceled' }),
-    createRun({ id: 3, definition: { id: config.pipelines.qa, name: 'QA' } }),
-  ]);
+    createRun(),
+    createRun({ id: 502, status: 'abandoned', result: 'succeeded' }),
+    createRun({ id: 503, result: 'canceled' }),
+  ], { versions: { 502: '2044.2.0', 503: '4.3.0' } });
   const data = await source.service.get();
-  assert.equal(source.calls, 0);
-  assert.equal(data.runs.length, 3);
+  assert.deepEqual(data.releases.map(release => release.version), ['4.2.0']);
+  assert.ok(data.releases[0].progress.every(item => item.status === 'not-recorded'));
+  assert.equal(data.runs.find(run => run.id === 502).result, 'succeeded');
+  assert.equal(data.runs.find(run => run.id === 502).abandonment, 'abandoned');
+  assert.equal(source.service.run(502).run.abandonment, 'abandoned');
+  assert.deepEqual(data.warnings, []);
+  assertOnlyApiRequests(source.calls);
+});
+
+test('a refresh uses the current summary status even when lastChangedDate stays unchanged', async () => {
+  const source = fixture();
+  assert.equal((await source.service.get()).releases.length, 1);
+  const initialCalls = source.calls.length;
+  source.setRuns([createRun({ status: 'abandoned' })]);
+  assert.equal((await source.service.get()).releases.length, 1, 'The normal dashboard cache remains bounded by its configured lifetime');
+  assert.equal(source.calls.length, initialCalls);
+  const refreshed = await source.service.get({ refresh: true });
+  assert.deepEqual(refreshed.releases, []);
+  assert.equal(refreshed.runs[0].abandonment, 'abandoned');
+  assertOnlyApiRequests(source.calls);
+});
+
+test('Build summary failures report a safe refresh error and can recover without HTML fallback', async () => {
+  const source = fixture();
+  source.setFailure('build/builds');
+  await assert.rejects(source.service.get(), error => error.code === 'ado_response_error' && !error.message.includes('private-upstream-error'));
+  source.setFailure(null);
+  const recovered = await source.service.get({ refresh: true });
+  assert.equal(recovered.releases.length, 1);
+  assert.deepEqual(recovered.warnings, []);
+  assertOnlyApiRequests(source.calls);
+});
+
+test('unavailable timelines remain explicit and do not fabricate candidate evidence', async () => {
+  const source = fixture();
+  source.setFailure('build/builds/501/timeline');
+  const incomplete = await source.service.get();
+  assert.deepEqual(incomplete.releases, []);
+  assert.ok(incomplete.warnings.some(warning => warning.code === 'timeline_unavailable'));
+  assert.equal(JSON.stringify(incomplete).includes('private-upstream-error'), false);
+  source.setFailure(null);
+  assert.equal((await source.service.get({ refresh: true })).releases.length, 1);
+  assertOnlyApiRequests(source.calls);
+});
+
+test('linked QA summaries also retain abandonment instead of displaying their original result as current success', async () => {
+  const source = fixture([createRun()], {
+    linkedQa: createRun({ id: 701, definition: { id: config.pipelines.qa, name: 'QA' }, status: 'abandoned', result: 'succeeded' }),
+  });
+  const data = await source.service.get();
+  const link = data.runs.find(run => run.id === 501).qaLinks[0];
+  assert.equal(link.id, 701);
+  assert.equal(link.status, 'abandoned');
+  assert.equal(link.result, 'succeeded');
+  assert.equal(link.abandonment, 'abandoned');
+  assertOnlyApiRequests(source.calls);
 });

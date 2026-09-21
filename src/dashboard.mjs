@@ -8,7 +8,6 @@ export function createDashboardService(config, client) {
   let pending;
   let lastDetails = new Map();
   let lastBuilds = [];
-  let runStates = new Map();
 
   async function load() {
     const warnings = [];
@@ -20,21 +19,7 @@ export function createDashboardService(config, client) {
     const builds = lists.flatMap(list => list.items.map(build => ({ ...build, _kind: list.kind })));
     const relevant = builds.filter(build => build.definition.id !== config.pipelines.qa);
     const details = new Map();
-    const nextRunStates = new Map();
     await mapConcurrent(relevant, 6, async build => {
-      if (build.status === 'completed' && !['canceled', 'cancelled', 'abandoned'].includes(String(build.result || '').toLowerCase())) {
-        const key = `${build.id}:${build.definition.id}`;
-        const changedAt = typeof build.lastChangedDate === 'string' && Number.isFinite(Date.parse(build.lastChangedDate)) ? build.lastChangedDate : null;
-        try {
-          const prior = runStates.get(key);
-          const state = changedAt && prior?.changedAt === changedAt ? prior.state : await client.getRunStatus(Number(build.id), Number(build.definition.id));
-          build._abandonment = state.status === 16 ? 'abandoned' : 'not-abandoned';
-          if (changedAt) nextRunStates.set(key, { changedAt, state });
-        } catch {
-          build._abandonment = 'unknown';
-          warnings.push({ code: 'run_state_unavailable', message: `Current state for run ${build.id} could not be verified; its candidate evidence is withheld until a refresh succeeds.` });
-        }
-      }
       try {
         const { data: timeline } = await client.get(`build/builds/${build.id}/timeline`);
         const tasks = (timeline.records || []).filter(record => record.type === 'Task' && record.log?.id && INTERESTING_LOG.test(record.name || ''));
@@ -104,8 +89,6 @@ export function createDashboardService(config, client) {
     const dashboard = buildDashboard({ builds, details, environments, environmentRecords, organization: config.organization, project: config.project, fetchedAt, limits, warnings });
     lastDetails = details;
     lastBuilds = builds;
-    // Only verified minimal states from the current snapshot remain in memory.
-    runStates = nextRunStates;
     cached = dashboard;
     return dashboard;
   }
