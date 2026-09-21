@@ -197,6 +197,7 @@ function progressForRun(run, environment, deployments, detail, runsById) {
     evidence: event?.evidence || [evidence(record ? `ADO stage: ${record.name || record.identifier}` : 'Matching ADO pipeline run', record ? recordUrl(run, record) : run.url, record ? 'timeline' : 'run')],
     orderTime: time(event?.finishedAt || event?.startedAt) || time(record?.finishTime || record?.startTime) || time(run.queuedAt),
   });
+  if (!records.length && detail?.validationFailed) return observation('failed', 'Failed', 'Pipeline validation failed before any deployment started.', null, null);
   if (!records.length) return observation('unknown', 'Unknown', 'A matching run exists, but its timeline is unavailable in this snapshot.', null, null);
   if (environment === 'DEV' && !deployments.length) return observation('unknown', 'Unknown', 'A run for this exact commit exists, but retained evidence does not confirm its DEV deployment and resolved namespace.', null, null);
   if (current?.status === 'succeeded') return observation('deployed', environment === 'DEV' ? 'Commit deployed' : 'Deployed', environment === 'DEV'
@@ -286,6 +287,10 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
       name: record.name || record.identifier, identifier: record.identifier || null, status: recordStatus(record),
       startedAt: record.startTime || null, finishedAt: record.finishTime || null, attempt: attempt(record),
     }));
+    run.qaLinks = [];
+    // Validation failures have no execution history to lose or namespace to
+    // infer. Keep the failed summary without treating it as a coverage gap.
+    if (!records.length && detail?.validationFailed) continue;
     if (!records.length && ['create', 'dev', 'release'].includes(kind)) missingTimelines += 1;
     if (kind === 'create') {
       for (const log of detail?.logs || []) {
@@ -301,7 +306,6 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
         });
       }
     }
-    run.qaLinks = [];
     for (const log of detail?.logs || []) {
       const record = findLogRecord(log, records);
       if ((log.recordName || record?.name) !== 'Trigger QA pipeline' || !isSuccess(record)) continue;

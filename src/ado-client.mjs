@@ -149,6 +149,9 @@ export class AdoClient {
         if (response.status === 401 || response.status === 403) throw new AdoError('access_denied', 'Azure DevOps denied access. Check the signed-in account and its read permissions for this project.', response.status);
         throw new AdoError('ado_response_error', `Azure DevOps returned HTTP ${response.status} for a history request.`, response.status === 404 ? 404 : 502);
       }
+      // ADO returns 204 when a run has no timeline (for example, failed YAML
+      // validation). Preserve that distinction from a failed history request.
+      if (response.status === 204) return { data: text ? '' : null, continuation: null };
       let size = 0;
       const chunks = [];
       for await (const chunk of response.body) {
@@ -171,7 +174,7 @@ export class AdoClient {
     do {
       const top = path.endsWith('/environmentdeploymentrecords') ? 'top' : '$top';
       const response = await this.get(path, { ...query, [top]: Math.min(100, limit - items.length), continuationToken: continuation });
-      if (!Array.isArray(response.data.value)) throw new AdoError('invalid_response', 'Azure DevOps returned an unexpected history list.');
+      if (!Array.isArray(response.data?.value)) throw new AdoError('invalid_response', 'Azure DevOps returned an unexpected history list.');
       items.push(...response.data.value.slice(0, limit - items.length));
       continuation = response.continuation;
       pages += 1;

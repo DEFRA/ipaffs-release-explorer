@@ -19,7 +19,7 @@ const createRun = (overrides = {}) => ({
   queueTime: changedAt, startTime: changedAt, finishTime: changedAt, ...overrides,
 });
 
-function fixture(initialRuns = [createRun()], { versions = {}, linkedQa } = {}) {
+function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {} } = {}) {
   let runs = initialRuns;
   let failure;
   const calls = [];
@@ -32,7 +32,10 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa } = {}) 
       // Authenticated web pages can fail for this identity. They are never needed.
       if (url.pathname.includes('/_build/')) return new Response('private-page-error', { status: 500 });
       const path = url.pathname.split('/_apis/')[1];
-      if (failure === path) return new Response('private-upstream-error', { status: 500 });
+      if (failure?.path === path) {
+        if (failure.status === 'network') throw new Error('private-network-error');
+        return new Response('private-upstream-error', { status: failure.status });
+      }
       if (path === 'build/builds') {
         assert.equal(url.searchParams.get('api-version'), '7.2-preview.8');
         return Response.json({ value: runs.filter(run => run.definition.id === Number(url.searchParams.get('definitions'))) });
@@ -45,6 +48,8 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa } = {}) 
       const timeline = path.match(/^build\/builds\/(\d+)\/timeline$/);
       if (timeline) {
         assert.equal(url.searchParams.get('api-version'), '7.1');
+        if (Object.hasOwn(timelines, timeline[1])) return timelines[timeline[1]] === null
+          ? new Response(null, { status: 204 }) : Response.json(timelines[timeline[1]]);
         const records = [{ id: 'create-task', type: 'Task', name: 'Create release branch or next patch tag', state: 'completed', result: 'succeeded', finishTime: changedAt, log: { id: 17 } }];
         if (linkedQa) records.push({ id: 'qa-task', type: 'Task', name: 'Trigger QA pipeline', state: 'completed', result: 'succeeded', log: { id: 18 } });
         return Response.json({ records });
@@ -62,7 +67,7 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa } = {}) 
   return {
     service: createDashboardService(config, client), calls,
     setRuns(next) { runs = next; },
-    setFailure(path) { failure = path; },
+    setFailure(path, status = 500) { failure = path ? { path, status } : null; },
   };
 }
 
@@ -135,4 +140,68 @@ test('linked QA summaries also retain abandonment instead of displaying their or
   assert.equal(link.result, 'succeeded');
   assert.equal(link.abandonment, 'abandoned');
   assertOnlyApiRequests(source.calls);
+});
+
+test('confirmed validation failures with absent timelines do not warn or invent deployment state', async () => {
+  for (const kind of ['dev', 'create', 'release']) {
+    for (const timeline of [null, { records: [] }]) {
+      const source = fixture([createRun({
+        definition: { id: config.pipelines[kind], name: `Example ${kind}` },
+        result: 'failed', validationResults: [{ result: 'error', message: 'Synthetic pipeline validation error' }],
+      })], { timelines: { 501: timeline } });
+      const data = await source.service.get();
+      assert.deepEqual(data.warnings, [], `${kind}: ${JSON.stringify(timeline)}`);
+      assert.equal(data.runs[0].result, 'failed');
+      assert.equal(source.service.run(501).note, 'Pipeline validation failed before any deployment started.');
+      assert.deepEqual(data.releases, []);
+      assert.deepEqual(data.namespaces, []);
+      assert.ok(data.environments.every(environment => environment.lastSuccess === null && environment.latestAttempt === null));
+      assertOnlyApiRequests(source.calls);
+    }
+  }
+});
+
+test('an empty timeline remains a warning unless a completed failure has explicit validation errors', async () => {
+  for (const overrides of [
+    { result: 'failed' },
+    { result: 'failed', validationResults: [{ result: 'warning' }] },
+    { result: 'succeeded', validationResults: [{ result: 'error' }] },
+    { status: 'inProgress', result: 'failed', validationResults: [{ result: 'error' }] },
+  ]) {
+    for (const timeline of [null, { records: [] }]) {
+      const source = fixture([createRun(overrides)], { timelines: { 501: timeline } });
+      const data = await source.service.get();
+      assert.ok(data.warnings.some(warning => warning.code === 'timeline_unavailable'), JSON.stringify(overrides));
+      assert.ok(data.warnings.some(warning => warning.code === 'TIMELINE_COVERAGE'));
+      assert.deepEqual(data.releases, []);
+    }
+  }
+});
+
+test('validation metadata does not suppress timeline permission, transport or server failures', async () => {
+  for (const status of [401, 403, 404, 500, 'network']) {
+    const source = fixture([createRun({ result: 'failed', validationResults: [{ result: 'error' }] })]);
+    source.setFailure('build/builds/501/timeline', status);
+    const data = await source.service.get();
+    assert.ok(data.warnings.some(warning => warning.code === 'timeline_unavailable'), String(status));
+    assert.ok(data.warnings.some(warning => warning.code === 'TIMELINE_COVERAGE'));
+    assert.equal(JSON.stringify(data).includes('private-'), false);
+  }
+});
+
+test('nonempty deployment evidence takes precedence over validation errors in a failed run', async () => {
+  const record = (environment, result) => ({
+    id: `stage-${environment}`, type: 'Stage', name: `Deploy ${environment}`,
+    identifier: `${environment}_DeployChart`, state: 'completed', result,
+    startTime: changedAt, finishTime: changedAt,
+  });
+  const source = fixture([createRun({
+    definition: { id: config.pipelines.release, name: 'Example release' },
+    sourceBranch: 'refs/tags/4.2.0', result: 'failed', validationResults: [{ result: 'error' }],
+  })], { timelines: { 501: { records: [record('TST', 'succeeded'), record('PRE', 'failed')] } } });
+  const data = await source.service.get();
+  assert.deepEqual(data.warnings, []);
+  assert.equal(data.environments.find(environment => environment.name === 'TST').lastSuccess.runId, 501);
+  assert.equal(data.environments.find(environment => environment.name === 'PRE').latestAttempt.status, 'failed');
+  assert.equal(source.service.run(501).stages.length, 2);
 });

@@ -180,6 +180,26 @@ test('QA runs without deployment timelines do not reduce deployment coverage', (
   assert.equal(data.coverage.find(item => item.label === 'Deployment history').status, 'available');
 });
 
+test('confirmed validation failures remain in history without timeline or namespace warnings', () => {
+  const builds = [devBuild(1, { result: 'failed' }), releaseBuild(2, { result: 'failed' }), build(3, { result: 'failed' })];
+  const data = model(builds, builds.map(run => [run.id, { ...detail([]), validationFailed: true }]));
+  assert.equal(data.runs.length, 3);
+  assert.ok(data.runs.every(run => run.result === 'failed'));
+  assert.deepEqual(data.warnings, []);
+  assert.deepEqual(data.namespaces, []);
+  assert.deepEqual(data.releases, []);
+  assert.ok(data.environments.every(environment => environment.lastSuccess === null && environment.latestAttempt === null));
+});
+
+test('a validation marker cannot discard nonempty deployment or namespace evidence', () => {
+  const data = model([devBuild(1, { result: 'failed' })], [[1, {
+    ...detail([...chartTimeline('DEV'), resolverRecord()], [{ id: 27, recordName: 'Resolve namespace', text: 'Using namespace: dev\n' }]),
+    validationFailed: true,
+  }]]);
+  assert.equal(env(data, 'DEV').lastSuccess.runId, 1);
+  assert.equal(data.namespaces[0].confidence, 'recorded');
+});
+
 test('DEV run numbers are labeled as build numbers and preserve source ref', () => {
   const data = model([devBuild(1)], [[1, detail(chartTimeline('DEV'))]]);
   assert.equal(env(data, 'DEV').lastSuccess.versionKind, 'build-number');
@@ -295,6 +315,50 @@ test('missing newer matching timeline stays unknown while retaining older succes
   assert.equal(progress(data, 'TST').runId, 2);
   assert.equal(progress(data, 'TST').lastSuccess.runId, 1);
   assert.match(progress(data, 'TST').detail, /timeline is unavailable/);
+});
+
+test('candidate progress identifies pipeline validation failure without inventing a deployment attempt', () => {
+  const data = candidateModel([devBuild(1, { result: 'failed' }), build(2, { result: 'failed' })], [
+    [1, { ...detail([]), validationFailed: true }],
+    [2, { ...detail([]), validationFailed: true }],
+  ]);
+  for (const environment of ['DEV', 'TST', 'PRE', 'PRD']) {
+    const item = progress(data, environment);
+    assert.equal(item.status, 'failed', environment);
+    assert.equal(item.label, 'Failed');
+    assert.equal(item.detail, 'Pipeline validation failed before any deployment started.');
+    assert.equal(item.lastSuccess, null);
+    assert.equal(item.latestAttempt, null);
+    assert.equal(item.runId, environment === 'DEV' ? 1 : 2);
+    assert.equal(item.evidence[0].type, 'run');
+  }
+  assert.deepEqual(data.warnings, []);
+});
+
+test('later validation failures preserve earlier successful DEV and release deployment evidence', () => {
+  const data = candidateModel([
+    devBuild(1, { queueTime: at(9) }), build(2, { queueTime: at(9) }),
+    devBuild(3, { queueTime: at(12), result: 'failed' }), build(4, { queueTime: at(12), result: 'failed' }),
+  ], [
+    [1, detail([...chartTimeline('DEV'), resolverRecord()], [{ id: 27, recordName: 'Resolve namespace', text: 'Using namespace: dev\n' }])],
+    [2, detail(chartTimeline('TST'))],
+    [3, { ...detail([]), validationFailed: true }],
+    [4, { ...detail([]), validationFailed: true }],
+  ]);
+  for (const [environment, successfulRun, failedRun] of [['DEV', 1, 3], ['TST', 2, 4]]) {
+    const item = progress(data, environment);
+    assert.equal(item.status, 'failed');
+    assert.equal(item.runId, failedRun);
+    assert.equal(item.lastSuccess.runId, successfulRun);
+    assert.equal(item.latestAttempt.runId, successfulRun);
+    assert.equal(env(data, environment).latestAttempt.runId, successfulRun);
+    assert.match(item.detail, /Pipeline validation failed before any deployment started\./);
+    assert.match(item.detail, /earlier successful/);
+    assert.ok(item.evidence.some(source => source.url.includes(`buildId=${successfulRun}`)));
+    assert.ok(item.evidence.some(source => source.url.includes(`buildId=${failedRun}`)));
+  }
+  assert.deepEqual(data.warnings, []);
+  assert.equal(data.coverage.find(item => item.label === 'Deployment history').status, 'available');
 });
 
 test('a later pending or skipped retry does not erase known candidate deployment history', () => {

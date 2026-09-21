@@ -22,7 +22,20 @@ export function createDashboardService(config, client) {
     await mapConcurrent(relevant, 6, async build => {
       try {
         const { data: timeline } = await client.get(`build/builds/${build.id}/timeline`);
-        const tasks = (timeline.records || []).filter(record => record.type === 'Task' && record.log?.id && INTERESTING_LOG.test(record.name || ''));
+        const records = timeline === null ? [] : timeline?.records;
+        if (!Array.isArray(records)) throw new Error('Invalid timeline');
+        if (!records.length) {
+          // A failed run alone may still contain successful deployments. Only
+          // explicit request validation errors plus an empty timeline establish
+          // that no deployment started. Access/transport errors remain warnings.
+          if (build.status === 'completed' && build.result === 'failed'
+            && Array.isArray(build.validationResults) && build.validationResults.some(item => item?.result === 'error')) {
+            details.set(Number(build.id), { validationFailed: true, timeline: { records: [] }, logs: [] });
+            return;
+          }
+          throw new Error('Timeline unavailable');
+        }
+        const tasks = records.filter(record => record.type === 'Task' && record.log?.id && INTERESTING_LOG.test(record.name || ''));
         const logs = await mapConcurrent(tasks, 2, async record => {
           try {
             const { data: text } = await client.get(`build/builds/${build.id}/logs/${record.log.id}`, {}, { text: true });
@@ -121,7 +134,8 @@ export function createDashboardService(config, client) {
         stages,
         evidence: [{ label: 'Original pipeline run', url: run.url, type: 'run' }],
         tags: Array.isArray(source?.tags) ? source.tags : [],
-        note: detail ? 'Stage outcomes describe recorded pipeline activity, not live cluster health.' : 'Only run summary data was read for this pipeline.',
+        note: detail?.validationFailed ? 'Pipeline validation failed before any deployment started.'
+          : detail ? 'Stage outcomes describe recorded pipeline activity, not live cluster health.' : 'Only run summary data was read for this pipeline.',
       };
     },
   };
