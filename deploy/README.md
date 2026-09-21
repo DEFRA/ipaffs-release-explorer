@@ -232,9 +232,17 @@ Azure and ADO authentication retain normal TLS verification, and browsers will
 still warn about an invalid certificate. Set the variable to `false` or remove it
 when the certificate is corrected. Invalid values fail before deployment.
 
-DNS and routing failures, unhealthy responses, and certificate failures when
-verification is enabled fail the run; this does not
-roll back a Helm installation that already succeeded.
+After Helm completes, the check makes up to seven attempts, waiting five seconds
+between attempts. Each attempt requires HTTP 200 and the application's healthy
+JSON response: an ingress error page returned with HTTP 200 is still a failure.
+The complete check is retried so ingress routing has time to update after a pod
+replacement. Redirects are not followed. Each request retains a ten-second
+connection timeout and a fifteen-second overall timeout.
+
+Persistent DNS or routing failures, unhealthy responses, and certificate failures
+when verification is enabled fail the run. Diagnostic messages report the attempt
+and HTTP status without printing response bodies. This does not roll back a Helm
+installation that already succeeded.
 
 Access relies on the DEV network boundary. NGINX provides routing and TLS, not a
 user sign-in: anyone who can reach this URL can view the dashboard's ADO data. The
