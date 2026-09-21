@@ -8,7 +8,7 @@ ingress:
   tlsSecretName: ""
 
 ado:
-  runsPerPipeline: 20
+  runsPerPipeline: 100
   cacheSeconds: 90
 
 resources:

@@ -17,7 +17,7 @@ export function sampleDashboard() {
   const previousPrd = { ...deploy(99, 'PRD', '4.1.3', 'succeeded', 120), commit: 'b'.repeat(40) };
   const dashboard = {
     readOnly: true, mode: 'sample', organization, project, fetchedAt: now.toISOString(),
-    limits: { runCount: 3, retrievedRuns: 3, runsPerPipeline: 20, limited: true, scope: 'Illustrative sample data; no live ADO requests.' },
+    limits: { runCount: 3, retrievedRuns: 3, runsPerPipeline: 100, limited: true, scope: 'Illustrative sample data; no live ADO requests.' },
     warnings: [{ code: 'sample', message: 'Sample data is illustrative. Switch to live data to read your ADO project.' }],
     coverage: [
       { label: 'Deployment history', status: 'available', detail: 'Recorded stage outcomes, including releases waiting for approval.' },

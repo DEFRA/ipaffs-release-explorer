@@ -22,7 +22,7 @@ ado:
     createRelease: ""
     release: ""
     qa: ""
-  runsPerPipeline: 20
+  runsPerPipeline: 100
   cacheSeconds: 90
 
 # Explicit host headers only. The chart also permits its own Service DNS names.

@@ -117,9 +117,9 @@ The server requires an explicit organisation, project and four pipeline IDs:
 - `ADO_QA_PIPELINE_ID`
 
 Copy `.env.example` to `.env` to configure these values, the port or scan
-size. The default reads up to 20 recent runs **per pipeline**, plus explicitly
+size. The default reads up to 100 recent runs **per pipeline**, plus explicitly
 linked QA runs. The UI states its scan limit; it does not claim to represent all
-retained history. Increase `ADO_RUNS_PER_PIPELINE` up to 100 for a broader scan.
+retained history. Set `ADO_RUNS_PER_PIPELINE` between 1 and 100 to adjust the scan size.
 Responses are cached in memory for 90 seconds; Refresh requests a new scan.
 
 Authentication preference is `ADO_PAT`, then `ADO_BEARER_TOKEN`, then AKS workload
