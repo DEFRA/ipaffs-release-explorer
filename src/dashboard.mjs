@@ -2,7 +2,7 @@ import { buildDashboard, successfulQaLinks } from './model.mjs';
 import { mapConcurrent } from './ado-client.mjs';
 import { normalizeRetentionPolicy, inferQaRetention } from './retention.mjs';
 
-const INTERESTING_LOG = /Resolve namespace|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline/i;
+const INTERESTING_LOG = /Resolve namespace|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline|Publish namespace access URLs|Generate namespace URLs/i;
 
 export function createDashboardService(config, client, { now = Date.now } = {}) {
   let cached;
@@ -46,7 +46,7 @@ export function createDashboardService(config, client, { now = Date.now } = {}) 
               const parsed = JSON.parse(text);
               if (Array.isArray(parsed.value)) logText = parsed.value.join('\n');
             } catch { /* Plain text is the normal response. */ }
-            return { id: record.log.id, text: logText, recordName: record.name, recordIdentifier: record.identifier };
+            return { id: record.log.id, text: logText, recordId: record.id, recordName: record.name, recordIdentifier: record.identifier };
           } catch {
             warnings.push({ code: 'log_unavailable', message: `A supporting log for run ${build.id} is unavailable; some fields may be unknown.` });
             return null;
