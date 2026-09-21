@@ -30,6 +30,7 @@ public repository. Populate it from your existing DEV configuration:
 | `kubernetesCluster` | DEV AKS name |
 | `acrName` | Existing DEV ACR name |
 | `ingressHost` | Full internal DNS hostname covered by the NGINX controller's certificate |
+| `ingressSkipTlsVerify` | Optional: exact `true` skips certificate verification only for the DEV ingress health check; omitted or `false` verifies certificates |
 | `ADO_ORGANIZATION` | `https://dev.azure.com/<your-organisation>` |
 | `ADO_PROJECT` | Project containing IPAFFS pipeline history |
 | `ADO_DEV_PIPELINE_ID` | DEV deployment pipeline ID |
@@ -134,9 +135,10 @@ local bootstrap once, enrol that identity, and then start the full pipeline.
 If the identity is deleted/recreated, or a different namespace is selected, its
 new principal must be enrolled separately.
 
-The abandoned-status page provider is not a public REST contract. Managed-identity
-access to it must be verified on the first deployment. The dashboard reports
-missing state rather than inventing candidates if this read fails.
+The app reads abandoned status from Build summary API `7.2-preview.8`, using
+the managed identity. It does not fetch authenticated ADO web pages. Required
+Build history failures are reported as errors rather than using an older API
+version that may omit abandoned status.
 
 Allow pod HTTPS egress and DNS for `login.microsoftonline.com` and `dev.azure.com`.
 The deployment agent separately needs access to ACR, AKS, tool download hosts and
@@ -188,7 +190,7 @@ overrides disabled. A run on `main`:
 4. Creates or updates the managed identity and federation and reads their IDs.
 5. Verifies cluster identity settings and federation, then installs/upgrades the
    chart in the dedicated namespace with a ten-minute readiness timeout.
-6. Checks the ingress URL with certificate verification, then checks live ADO reads
+6. Checks the ingress URL (verifying certificates by default), then checks live ADO reads
    from the running pod. A freshly provisioned identity gets
    a bounded retry for token-exchange propagation. An authentication or permissions
    failure must be resolved before treating the deployment as ready for use.
@@ -221,8 +223,17 @@ agent. If a different certificate is needed, set `ingress.tlsSecretName` to an
 existing TLS Secret in the app namespace. The chart does not create that Secret.
 See the [NGINX default certificate documentation](https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/tls.md#default-ssl-certificate).
 
-The deployment checks HTTPS `/healthz` from the DEV agent with normal certificate
-verification. DNS, certificate or routing failures fail the run; this does not
+The deployment checks HTTPS `/healthz` from the DEV agent with certificate
+verification by default. While a DEV certificate mismatch is being resolved,
+set `ingressSkipTlsVerify=true` in the variable group to skip certificate
+verification for this unauthenticated health request only. The run emits a
+warning and still checks HTTP success and the application's JSON health response.
+Azure and ADO authentication retain normal TLS verification, and browsers will
+still warn about an invalid certificate. Set the variable to `false` or remove it
+when the certificate is corrected. Invalid values fail before deployment.
+
+DNS and routing failures, unhealthy responses, and certificate failures when
+verification is enabled fail the run; this does not
 roll back a Helm installation that already succeeded.
 
 Access relies on the DEV network boundary. NGINX provides routing and TLS, not a
