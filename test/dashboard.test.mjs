@@ -125,6 +125,20 @@ test('dashboard applies configured canonical DEV links without requesting applic
   assertOnlyApiRequests(source.calls);
 });
 
+test('deployment requesters come from existing Build summaries and remain available in run details', async () => {
+  const run = createRun({ definition: { id: config.pipelines.dev, name: 'Deploy DEV' }, reason: 'manual',
+    requestedBy: { displayName: 'Example operator', uniqueName: 'operator@example.invalid' },
+    requestedFor: { displayName: 'Example operator' } });
+  const records = [{ id: 'stage', type: 'Stage', identifier: 'DEV_DeployChart', state: 'completed', result: 'succeeded', finishTime: changedAt }];
+  const source = fixture([run], { timelines: { 501: { records } } });
+  const data = await source.service.get();
+  assert.deepEqual(data.namespaces[0].lastSuccess.trigger, { reason: 'manual', requestedBy: 'Example operator', requestedFor: 'Example operator' });
+  assert.deepEqual(source.service.run(501).run.trigger, data.namespaces[0].lastSuccess.trigger);
+  assert.doesNotMatch(JSON.stringify(data), /operator@example\.invalid/);
+  assert.equal(source.calls.length, 6, 'Four pipeline lists, one timeline and one environment list; no identity lookup');
+  assertOnlyApiRequests(source.calls);
+});
+
 test('API status excludes abandoned and canceled creation while genuine candidates awaiting deployment remain visible', async () => {
   const source = fixture([
     createRun(),

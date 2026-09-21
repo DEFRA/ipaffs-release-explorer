@@ -64,6 +64,19 @@ successful recorded deployment separate from the latest attempt. An older
 version deployed later (rollback) can be the last success. No claim is made that
 a prior version still runs after a failed deployment or an out-of-band change.
 
+Each DEV namespace shows the trigger for its last successful deployment's
+pipeline run. Manual runs show ADO's requester name; CI, scheduled and other
+automatic runs are labelled by trigger type. Deployment and run details retain
+the requester and, when different, the identity on whose behalf the run was
+queued. A newer failed attempt does not replace the last-success attribution.
+Missing identity data stays **Not recorded**; commit authors are not used as a
+substitute. Only display names are returned, without extra identity fields.
+
+This identifies who queued the original pipeline run. For a stage retry, ADO's
+build summary does not establish who initiated that retry; the details say so.
+The app uses the existing [Build API requester fields](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get?view=azure-devops-rest-7.1)
+and requires no extra permissions or pipeline changes.
+
 DEV runs without a reliable namespace mapping are silently omitted from the
 namespace list. For mapped namespaces, **Open B2C** and **Open B2B** use the
 recorded notifications URLs, falling back to recorded base URLs when necessary.

@@ -24,12 +24,19 @@ function runUrl(build, organization, project) {
 }
 
 function normalizeRun(build, organization, project) {
+  // Build requester identifies the original queue action, not a later stage
+  // retry. Keep only display names; other identity fields stay in ADO.
+  const displayName = identity => typeof identity?.displayName === 'string' ? identity.displayName.trim() || null : null;
   return {
     id: Number(build.id), pipeline: build.definition?.name || `Pipeline ${build.definition?.id || '?'}`,
     pipelineId: Number(build.definition?.id), buildNumber: build.buildNumber || null,
     sourceRef: build.sourceBranch || null, commit: build.sourceVersion || null,
     status: build.status || 'unknown', result: build.result || null,
     abandonment: isAbandonedStatus(build.status) ? 'abandoned' : null,
+    trigger: {
+      reason: typeof build.reason === 'string' ? build.reason : null,
+      requestedBy: displayName(build.requestedBy), requestedFor: displayName(build.requestedFor),
+    },
     queuedAt: build.queueTime || null, startedAt: build.startTime || null,
     finishedAt: build.finishTime || null, url: runUrl(build, organization, project),
   };
@@ -194,6 +201,7 @@ function deploymentFor(run, stage, record, envName, namespace, envRecords) {
     versionKind: taggedVersion(run.sourceRef) ? 'release-tag' : 'build-number', sourceRef: run.sourceRef,
     commit: run.commit, status: recordStatus(source), startedAt: source.startTime || null,
     finishedAt: source.finishTime || null, url: run.url, evidence: items,
+    trigger: run.trigger,
     attempt: attempt(source), namespace: namespace?.name || null, environment: envName,
     namespaceConfidence: namespace?.confidence || (envName === 'DEV' ? null : 'configured'),
   };

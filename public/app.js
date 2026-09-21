@@ -91,6 +91,45 @@ function recordStatus(record) {
   return record?.result || record?.status || 'unknown';
 }
 
+function runTriggerReason(trigger) {
+  const labels = {
+    manual: 'Manual', individualci: 'Automated CI', batchedci: 'Automated CI',
+    schedule: 'Scheduled', scheduleforced: 'Scheduled', pullrequest: 'Pull request',
+    buildcompletion: 'Pipeline trigger', resourcetrigger: 'Pipeline trigger',
+    checkinshelveset: 'Gated check-in', validateshelveset: 'Shelveset validation',
+  };
+  const reason = normalizedStatus(trigger?.reason);
+  return labels[reason] || (reason === 'unknown' || reason === 'none' ? 'Not recorded' : `Other (${trigger.reason})`);
+}
+
+function runTriggerSummary(deployment) {
+  const cell = node('td', 'run-trigger-cell');
+  if (!deployment) return append(cell, node('span', 'cell-primary', 'Not recorded'), node('span', 'cell-secondary', 'No successful deployment'));
+  const trigger = deployment.trigger;
+  const manual = normalizedStatus(trigger?.reason) === 'manual';
+  const reason = runTriggerReason(trigger);
+  append(cell,
+    node('span', 'cell-primary', manual ? trigger?.requestedBy || 'Not recorded' : reason),
+    node('span', 'cell-secondary', manual ? reason : trigger?.requestedBy ? `Run requested by ${trigger.requestedBy}` : 'Run requester not recorded'));
+  if (Number(deployment.attempt) > 1) cell.append(node('span', 'cell-secondary', 'Original run · retry requester not recorded'));
+  return cell;
+}
+
+function runTriggerFields(record) {
+  const trigger = record?.trigger;
+  return [
+    ['Run trigger', runTriggerReason(trigger)],
+    ['Run requested by', trigger?.requestedBy || 'Not recorded'],
+    ...(trigger?.requestedFor && trigger.requestedFor !== trigger.requestedBy ? [['Run requested for', trigger.requestedFor]] : []),
+  ];
+}
+
+function retryRequesterNote(deployment) {
+  return Number(deployment?.attempt) > 1
+    ? node('p', 'drawer-note', 'The requester identifies the original pipeline run. Who retried this deployment is not recorded in the available data.')
+    : null;
+}
+
 function badge(value, override) {
   const status = normalizedStatus(value);
   const labels = {
@@ -282,7 +321,7 @@ function renderNamespaces() {
   const container = $('namespace-table');
   container.replaceChildren();
   if (!namespaces.length) return container.append(empty('No DEV namespaces found', 'Namespace details may be missing from the available logs or deployment records.'));
-  const { table, body } = makeTable(['Namespace / branch', 'Type', 'Last recorded version', 'Last success', 'Latest attempt']);
+  const { table, body } = makeTable(['Namespace / branch', 'Type', 'Last recorded version', 'Last success', 'Run trigger', 'Latest attempt']);
   namespaces.forEach((namespace) => {
     const open = () => openNamespace(namespace);
     const row = clickableRow(open);
@@ -292,6 +331,7 @@ function renderNamespaces() {
       append(node('td'), badge(namespace.kind || 'Unknown', 'neutral')),
       append(node('td'), node('span', 'cell-primary', success ? deploymentVersion(success) : 'Not recorded'), success ? node('span', 'cell-secondary mono', shortCommit(success.commit)) : null),
       node('td', 'muted', success ? date(success.finishedAt) : 'No success found'),
+      runTriggerSummary(success),
       append(node('td'), namespace.latestAttempt ? badge(recordStatus(namespace.latestAttempt)) : badge('unknown')));
     body.append(row);
   });
@@ -452,8 +492,9 @@ function openDeployment(deployment, name) {
     [deployment.versionKind === 'build-number' ? 'ADO build number' : 'Release version', deployment.version || 'Not recorded'],
     ['Source ref', deployment.sourceRef, 'mono'], ['Manifest commit', deployment.commit || 'Not recorded', 'mono'],
     ['Status', badge(recordStatus(deployment))], ['Pipeline run', `#${deployment.runId}`], ['Stage attempt', deployment.attempt],
+    ...runTriggerFields(deployment),
     ['Started', date(deployment.startedAt, true)], ['Finished', deployment.finishedAt ? date(deployment.finishedAt, true) : 'Not finished / not recorded'],
-  ]), evidenceLinks(deployment.evidence, deployment.url));
+  ]), retryRequesterNote(deployment), evidenceLinks(deployment.evidence, deployment.url));
   loadStages(deployment.runId, content);
 }
 
@@ -465,6 +506,10 @@ function openNamespace(namespace) {
     ['Last success', namespace.lastSuccess ? date(namespace.lastSuccess.finishedAt, true) : 'Not recorded'],
     ['Latest attempt', badge(recordStatus(namespace.latestAttempt))],
   ]));
+  if (namespace.lastSuccess) append(content, append(node('section', 'drawer-section'),
+    node('h3', '', 'Last successful deployment trigger'),
+    detailFields([['Pipeline run', `#${namespace.lastSuccess.runId}`], ...runTriggerFields(namespace.lastSuccess)]),
+    retryRequesterNote(namespace.lastSuccess)));
   const launchSection = append(node('section', 'drawer-section'), node('h3', '', 'Open applications'));
   const links = namespaceAccessLinks(namespace);
   if (links.length) {
@@ -516,9 +561,10 @@ function appendProgressDeployment(container, title, deployment, environment) {
     ['Status', badge(recordStatus(deployment))], ['Namespace', deployment.namespace, 'mono'],
     [deployment.versionKind === 'build-number' ? 'ADO build number' : 'Release version', deployment.version],
     ['Run', deployment.runId ? `#${deployment.runId}` : 'Not recorded'], ['Attempt', deployment.attempt],
+    ...runTriggerFields(deployment),
     ['Started', deployment.startedAt ? date(deployment.startedAt, true) : 'Not started / not recorded'],
     ['Finished', deployment.finishedAt ? date(deployment.finishedAt, true) : 'Not finished / not recorded'],
-  ]), button('Inspect deployment record', 'button secondary', () => openDeployment(deployment, environment)));
+  ]), retryRequesterNote(deployment), button('Inspect deployment record', 'button secondary', () => openDeployment(deployment, environment)));
   container.append(section);
 }
 
@@ -528,6 +574,7 @@ function openRun(run) {
     ['Pipeline', run.pipeline], ['Build number', run.buildNumber], ['Source ref', run.sourceRef || 'Not recorded', 'mono'],
     ['Source commit', run.commit || 'Not recorded', 'mono'], ['Status', badge(recordStatus(run))],
     ...(run.abandonment === 'abandoned' ? [['Original execution result', badge(run.result)]] : []),
+    ...runTriggerFields(run),
     ['Queued', date(run.queuedAt, true)], ['Started', date(run.startedAt, true)], ['Finished', run.finishedAt ? date(run.finishedAt, true) : 'Not finished / not recorded'],
   ]), evidenceLinks(run.evidence, run.url));
   if (array(run.qaLinks).length) renderQaLinks(run.qaLinks, content);
