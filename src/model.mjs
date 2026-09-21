@@ -76,7 +76,19 @@ export function parseQaRunEvidence(logText) {
         try {
           const data = JSON.parse(text.slice(start, end + 1));
           const id = Number(data.id), pipelineId = Number(data.pipeline?.id || data.definition?.id);
-          if (Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(pipelineId) && pipelineId > 0) return { id, pipelineId };
+          if (Number.isSafeInteger(id) && id > 0 && Number.isSafeInteger(pipelineId) && pipelineId > 0) {
+            const link = { id, pipelineId };
+            // Pipeline Run and Build queue responses name these fields differently.
+            // Keep the child's own timestamps; parent deployment dates are not QA evidence.
+            const queuedAt = data.queueTime ?? data.createdDate;
+            const finishedAt = data.finishTime ?? data.finishedDate;
+            if (typeof queuedAt === 'string') link.queuedAt = queuedAt;
+            if (typeof finishedAt === 'string') link.finishedAt = finishedAt;
+            if (typeof data.reason === 'string') link.reason = data.reason;
+            if (typeof data.keepForever === 'boolean') link.keepForever = data.keepForever;
+            if (typeof data.retainedByRelease === 'boolean') link.retainedByRelease = data.retainedByRelease;
+            return link;
+          }
         } catch { /* A log preamble may contain braces that are not JSON. */ }
         break;
       }
@@ -90,6 +102,18 @@ function findLogRecord(log, records) {
     || records.find(record => log.recordId && record.id === log.recordId)
     || records.find(record => log.recordIdentifier && record.identifier === log.recordIdentifier)
     || records.find(record => log.recordName && record.name === log.recordName);
+}
+
+export function successfulQaLinks(detail) {
+  const records = detail?.timeline?.records || [];
+  const links = [];
+  for (const log of detail?.logs || []) {
+    const record = findLogRecord(log, records);
+    if ((log.recordName || record?.name) !== 'Trigger QA pipeline' || !isSuccess(record)) continue;
+    const link = parseQaRunEvidence(log.text);
+    if (link) links.push({ link, log });
+  }
+  return links;
 }
 
 function descendantOf(record, ancestor, records) {
@@ -269,7 +293,7 @@ function candidateProgress(candidate, runs, allDeployments, getDetail, runsById,
   });
 }
 
-export function buildDashboard({ builds = [], details = new Map(), environments = [], environmentRecords = [], organization = '', project = '', fetchedAt = new Date().toISOString(), limits = {}, warnings = [] } = {}) {
+export function buildDashboard({ builds = [], details = new Map(), environments = [], environmentRecords = [], organization = '', project = '', fetchedAt = new Date().toISOString(), limits = {}, warnings = [], qaAvailability = new Map() } = {}) {
   const runs = builds.map(build => normalizeRun(build, organization, project)).sort((a, b) => time(b.queuedAt) - time(a.queuedAt));
   const runsById = new Map(runs.map(run => [run.id, run]));
   const kindById = new Map(builds.map(build => [Number(build.id), build._kind]));
@@ -306,14 +330,11 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
         });
       }
     }
-    for (const log of detail?.logs || []) {
-      const record = findLogRecord(log, records);
-      if ((log.recordName || record?.name) !== 'Trigger QA pipeline' || !isSuccess(record)) continue;
-      const child = parseQaRunEvidence(log.text);
-      if (!child) continue;
+    for (const { link: child, log } of successfulQaLinks(detail)) {
       const childRun = runsById.get(child.id);
       run.qaLinks.push({ ...child, status: childRun?.status || 'unknown', result: childRun?.result || null,
         abandonment: childRun?.abandonment || null,
+        ...(!childRun && qaAvailability.has(child.id) ? { availability: qaAvailability.get(child.id) } : {}),
         url: childRun?.url || runUrl({ id: child.id }, organization, project), revisionVerified: false,
         evidence: [evidence('QA run ID from successful queue task', logUrl(run, log), 'log')] });
     }

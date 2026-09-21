@@ -1,9 +1,10 @@
-import { buildDashboard, parseQaRunEvidence } from './model.mjs';
+import { buildDashboard, successfulQaLinks } from './model.mjs';
 import { mapConcurrent } from './ado-client.mjs';
+import { normalizeRetentionPolicy, inferQaRetention } from './retention.mjs';
 
 const INTERESTING_LOG = /Resolve namespace|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline/i;
 
-export function createDashboardService(config, client) {
+export function createDashboardService(config, client, { now = Date.now } = {}) {
   let cached;
   let pending;
   let lastDetails = new Map();
@@ -57,19 +58,39 @@ export function createDashboardService(config, client) {
         details.set(Number(build.id), { error: 'Timeline unavailable', timeline: { records: [] }, logs: [] });
       }
     });
-    const linkedQaIds = new Set();
+    const linkedQa = new Map();
     for (const detail of details.values()) {
-      for (const log of detail.logs) {
-        if (!/Trigger QA pipeline/i.test(log.recordName)) continue;
-        const link = parseQaRunEvidence(log.text);
-        if (link?.pipelineId === config.pipelines.qa && Number.isSafeInteger(link.id) && !builds.some(build => build.id === link.id)) linkedQaIds.add(link.id);
+      for (const { link } of successfulQaLinks(detail)) {
+        if (link.pipelineId !== config.pipelines.qa || builds.some(build => build.id === link.id)) continue;
+        if (!linkedQa.has(link.id)) linkedQa.set(link.id, []);
+        linkedQa.get(link.id).push(link);
       }
     }
-    await mapConcurrent([...linkedQaIds], 4, async id => {
+    const qaAvailability = new Map();
+    const scannedQaRuns = builds.filter(build => build.definition.id === config.pipelines.qa);
+    // Optional policy lookup is shared within this scan, then refreshed with the
+    // next snapshot. Failure leaves the existing unknown-result explanation intact.
+    let retentionPromise;
+    const retentionPolicy = () => retentionPromise ||= client.get('build/retention')
+      .then(({ data }) => normalizeRetentionPolicy(data)).catch(() => null);
+    await mapConcurrent([...linkedQa], 4, async ([id, evidence]) => {
       try {
         const { data: child } = await client.get(`build/builds/${id}`);
-        if (child.definition?.id === config.pipelines.qa) builds.push({ ...child, _kind: 'qa' });
-      } catch {
+        if (child?.definition?.id !== config.pipelines.qa) throw new Error('Unexpected QA pipeline');
+        builds.push({ ...child, _kind: 'qa' });
+      } catch (error) {
+        if (error.code === 'ado_response_error' && error.status === 404) {
+          const policy = await retentionPolicy();
+          const observations = evidence.map(link => inferQaRetention(link, policy, { now: now(), runs: scannedQaRuns }));
+          // Conflicting or incomplete retained logs must not turn an unknown
+          // result into a confident age classification.
+          if (observations.length && observations.every(Boolean)) {
+            const availability = observations.sort((a, b) => (a.ageBasis === 'queued' ? 0 : 1) - (b.ageBasis === 'queued' ? 0 : 1) || a.ageDays - b.ageDays)[0];
+            qaAvailability.set(id, availability);
+            warnings.push({ code: 'qa_run_past_retention', severity: 'info', message: `Linked QA run ${id}: ${availability.label}. ${availability.detail}` });
+            return;
+          }
+        }
         warnings.push({ code: 'qa_run_unavailable', message: `Linked QA run ${id} is unavailable; its result is unknown.` });
       }
     });
@@ -89,7 +110,7 @@ export function createDashboardService(config, client) {
     } catch {
       warnings.push({ code: 'environments_unavailable', message: 'Environment history is unavailable; deployment timelines are used where present.' });
     }
-    const fetchedAt = new Date().toISOString();
+    const fetchedAt = new Date(now()).toISOString();
     const limits = {
       runsPerPipeline: config.runsPerPipeline,
       runCount: builds.length,
@@ -99,7 +120,7 @@ export function createDashboardService(config, client) {
       pipelines: lists.map(list => ({ kind: list.kind, count: list.items.length, limited: list.limited })),
       apiRequests: client.requests - callsBefore,
     };
-    const dashboard = buildDashboard({ builds, details, environments, environmentRecords, organization: config.organization, project: config.project, fetchedAt, limits, warnings });
+    const dashboard = buildDashboard({ builds, details, environments, environmentRecords, organization: config.organization, project: config.project, fetchedAt, limits, warnings, qaAvailability });
     lastDetails = details;
     lastBuilds = builds;
     cached = dashboard;
@@ -108,7 +129,7 @@ export function createDashboardService(config, client) {
 
   return {
     async get({ refresh = false } = {}) {
-      if (!refresh && cached && Date.now() - Date.parse(cached.fetchedAt) < config.cacheSeconds * 1000) return { ...cached, cached: true };
+      if (!refresh && cached && now() - Date.parse(cached.fetchedAt) < config.cacheSeconds * 1000) return { ...cached, cached: true };
       if (!pending) pending = load().finally(() => { pending = undefined; });
       return pending;
     },
