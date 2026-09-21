@@ -119,6 +119,47 @@ test('retry failures retain successful earlier job attempt if timeline evidence 
   assert.equal(env(data, 'TST').latestAttempt.attempt, 2);
 });
 
+test('DEV deployment trigger retains only requester display names and the original reason', () => {
+  const requester = { displayName: 'Example operator', id: 'private-identity-id', uniqueName: 'operator@example.invalid', imageUrl: 'https://avatar.example.invalid/private' };
+  const data = model([devBuild(1, { reason: 'manual', requestedBy: requester, requestedFor: { displayName: 'Example delegate' } })], [[1, detail(chartTimeline('DEV'))]]);
+  const expected = { reason: 'manual', requestedBy: 'Example operator', requestedFor: 'Example delegate' };
+  assert.deepEqual(data.runs[0].trigger, expected);
+  assert.deepEqual(data.namespaces[0].lastSuccess.trigger, expected);
+  assert.deepEqual(env(data, 'DEV').lastSuccess.trigger, expected);
+  assert.doesNotMatch(JSON.stringify(data), /private-identity-id|operator@example\.invalid|avatar\.example\.invalid/);
+});
+
+test('a later failed DEV attempt cannot replace the successful deployment requester', () => {
+  const data = model([
+    devBuild(1, { reason: 'manual', requestedBy: { displayName: 'Successful operator' } }),
+    devBuild(2, { reason: 'manual', result: 'failed', requestedBy: { displayName: 'Retry operator' } }),
+  ], [
+    [1, detail(chartTimeline('DEV', { startTime: at(1), finishTime: at(1) }))],
+    [2, detail(chartTimeline('DEV', { startTime: at(2), finishTime: at(2), result: 'failed' }, { result: 'failed' }))],
+  ]);
+  assert.equal(data.namespaces[0].lastSuccess.trigger.requestedBy, 'Successful operator');
+  assert.equal(data.namespaces[0].latestAttempt.trigger.requestedBy, 'Retry operator');
+});
+
+test('automated DEV deployments preserve their trigger reason and service identity', () => {
+  const data = model([devBuild(1, { reason: 'batchedCI', requestedBy: { displayName: 'Example build service' }, requestedFor: { displayName: 'Example build service' } })], [[1, detail(chartTimeline('DEV'))]]);
+  assert.deepEqual(data.namespaces[0].lastSuccess.trigger, { reason: 'batchedCI', requestedBy: 'Example build service', requestedFor: 'Example build service' });
+});
+
+test('missing or malformed requester metadata never falls back to beneficiary, commit author or last changer', () => {
+  for (const requestedBy of [undefined, {}, { displayName: '' }, { displayName: '  ' }, { displayName: 123 }, { uniqueName: 'operator@example.invalid' }]) {
+    const data = model([devBuild(1, { requestedBy, reason: 123, requestedFor: { displayName: 'Example beneficiary' }, lastChangedBy: { displayName: 'Example editor' } })], [[1, detail(chartTimeline('DEV'))]]);
+    assert.deepEqual(data.namespaces[0].lastSuccess.trigger, { reason: null, requestedBy: null, requestedFor: 'Example beneficiary' });
+  }
+});
+
+test('retry records retain original run attribution without inventing a retry actor', () => {
+  const data = model([devBuild(1, { reason: 'manual', requestedBy: { displayName: 'Original operator' }, lastChangedBy: { displayName: 'Later editor' } })], [[1, detail(chartTimeline('DEV', { attempt: 2 }, { attempt: 2 }))]]);
+  assert.equal(data.namespaces[0].lastSuccess.attempt, 2);
+  assert.equal(data.namespaces[0].lastSuccess.trigger.requestedBy, 'Original operator');
+  assert.doesNotMatch(JSON.stringify(data.namespaces), /Later editor/);
+});
+
 test('exact successful resolver overrides branch assumptions, including branch deploying canonical DEV', () => {
   const data = model([devBuild(1, { sourceBranch: 'refs/heads/feature/change' })], [[1, detail([...chartTimeline('DEV'), resolverRecord()], [{ id: 27, recordName: 'Resolve namespace', text: '2035-03-15T09:06:59.1Z Using namespace: dev\n' }])]]);
   assert.equal(env(data, 'DEV').lastSuccess.namespace, 'dev');

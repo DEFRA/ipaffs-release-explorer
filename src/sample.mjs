@@ -14,6 +14,7 @@ export function sampleDashboard() {
   const tst = deploy(100, 'TST', '4.2.0', 'succeeded', 24);
   const pre = deploy(100, 'PRE', '4.2.0', 'succeeded', 12);
   const dev = deploy(101, 'DEV', 'master', 'succeeded', 1);
+  dev.trigger = { reason: 'batchedCI', requestedBy: 'Example build service', requestedFor: 'Example build service' };
   const previousPrd = { ...deploy(99, 'PRD', '4.1.3', 'succeeded', 120), commit: 'b'.repeat(40) };
   const dashboard = {
     readOnly: true, mode: 'sample', organization, project, fetchedAt: now.toISOString(),
@@ -45,6 +46,9 @@ export function sampleDashboard() {
       { id: 99, pipeline: 'Release Pipeline', buildNumber: '4.1.3', sourceRef: 'refs/tags/4.1.3', commit: 'b'.repeat(40), status: 'completed', result: 'succeeded', queuedAt: at(121), startedAt: at(120.2), finishedAt: at(120), url: url(99) },
     ],
   };
+  for (const deployment of [dashboard.namespaces[1].lastSuccess, dashboard.namespaces[1].latestAttempt]) {
+    deployment.trigger = { reason: 'manual', requestedBy: 'Example operator', requestedFor: 'Example operator' };
+  }
   dashboard.namespaces[1].access = {
     runId: 102, observedAt: at(4), evidence: evidence(102),
     links: [
