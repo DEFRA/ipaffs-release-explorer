@@ -24,6 +24,10 @@ if [[ ${#INGRESS_HOST} -gt 253 || "$INGRESS_HOST" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0
   echo 'INGRESS_HOST must be a lowercase DNS hostname without a scheme, port or path.' >&2
   exit 1
 fi
+# Validate the optional DEV health-check override before changing any resources.
+# shellcheck source=deploy/scripts/check-ingress.sh
+source "$(dirname "${BASH_SOURCE[0]}")/check-ingress.sh"
+configure_ingress_check
 if [[ ! "$NAMESPACE" =~ ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$ || ${#NAMESPACE} -gt 63 ]]; then
   echo 'NAMESPACE must be a valid Kubernetes namespace.' >&2
   exit 1
@@ -117,16 +121,8 @@ helm upgrade --install ipaffs-release-explorer "${charts[0]}" \
   --values "$DEPLOY_TEMP_DIR/runtime-values.json" \
   --atomic --wait --timeout 10m --history-max 10
 
-# Verify DNS, certificate trust/hostname, ingress routing and the app Host allowlist.
-# Use normal TLS validation; a mismatched controller certificate must fail the run.
-curl --fail --silent --show-error --connect-timeout 10 --max-time 15 \
-  --retry 6 --retry-delay 5 --retry-all-errors \
-  --output "$DEPLOY_TEMP_DIR/ingress-health.json" "https://${INGRESS_HOST}/healthz"
-if ! jq -e '.status == "ok" and .readOnly == true' "$DEPLOY_TEMP_DIR/ingress-health.json" >/dev/null; then
-  echo 'Ingress health check did not reach the release explorer.' >&2
-  exit 1
-fi
-echo 'Ingress HTTPS check passed.'
+# Verify ingress routing and app health, with the configured DEV TLS policy.
+check_ingress
 
 # A ready process is not enough: verify that the pod can read ADO using its identity.
 # Emit only status/counts, never tokens, upstream responses or pipeline log contents.

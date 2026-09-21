@@ -154,6 +154,7 @@ stages:
                         ADO_RELEASE_PIPELINE_ID: $(ADO_RELEASE_PIPELINE_ID)
                         ADO_QA_PIPELINE_ID: $(ADO_QA_PIPELINE_ID)
                         INGRESS_HOST: $(ingressHost)
+                        INGRESS_SKIP_TLS_VERIFY: $(ingressSkipTlsVerify)
                         ARTIFACT_DIR: $(Pipeline.Workspace)/release-explorer
                         DEPLOY_TEMP_DIR: $(Agent.TempDirectory)/release-explorer-$(Build.BuildId)
                       inputs:
