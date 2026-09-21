@@ -32,7 +32,7 @@ export function loadConfig(env = process.env) {
       qa: integer('ADO_QA_PIPELINE_ID'),
     },
     environmentNames: ['DEV', 'TST', 'PRE', 'PRD'],
-    runsPerPipeline: integer('ADO_RUNS_PER_PIPELINE', 20, 1, 100),
+    runsPerPipeline: integer('ADO_RUNS_PER_PIPELINE', 100, 1, 100),
     cacheSeconds: integer('ADO_CACHE_SECONDS', 90, 10, 3600),
     host,
     port,
