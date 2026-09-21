@@ -36,6 +36,41 @@ function externalLink(label, value, className) {
   return link;
 }
 
+function safeApplicationUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash ? url.href : null;
+  } catch { return null; }
+}
+
+function namespaceAccessLinks(namespace) {
+  return array(namespace.access?.links).filter((link) => safeApplicationUrl(link.url));
+}
+
+function applicationLink(label, value, className) {
+  const url = safeApplicationUrl(value);
+  if (!url) return null;
+  const link = node('a', className, label);
+  link.href = url;
+  link.target = '_blank';
+  link.rel = 'noopener noreferrer';
+  link.title = url;
+  return link;
+}
+
+function namespaceLaunchShortcuts(namespace) {
+  const links = namespaceAccessLinks(namespace);
+  const shortcuts = node('div', 'namespace-launch-shortcuts');
+  for (const audience of ['b2c', 'b2b']) {
+    const recorded = links.find((link) => link.kind === `${audience}-notifications`) || links.find((link) => link.kind === `${audience}-base`);
+    if (!recorded) continue;
+    const link = applicationLink(`Open ${audience.toUpperCase()} ↗`, recorded.url, 'namespace-shortcut');
+    link.setAttribute('aria-label', `Open ${recorded.label} for ${namespace.name} (opens in a new tab)`);
+    shortcuts.append(link);
+  }
+  return shortcuts.childElementCount ? shortcuts : node('span', 'cell-secondary', 'No URLs recorded');
+}
+
 function date(value, full = false) {
   const parsed = value && new Date(value);
   if (!parsed || Number.isNaN(parsed.getTime())) return 'Time not recorded';
@@ -253,7 +288,7 @@ function renderNamespaces() {
     const row = clickableRow(open);
     const success = namespace.lastSuccess;
     append(row,
-      append(node('td'), button(namespace.name || 'Unknown namespace', 'row-trigger mono', open), node('span', 'cell-secondary truncate', cleanRef(namespace.branch))),
+      append(node('td'), button(namespace.name || 'Unknown namespace', 'row-trigger mono', open), node('span', 'cell-secondary truncate', cleanRef(namespace.branch)), namespaceLaunchShortcuts(namespace)),
       append(node('td'), badge(namespace.kind || 'Unknown', 'neutral')),
       append(node('td'), node('span', 'cell-primary', success ? deploymentVersion(success) : 'Not recorded'), success ? node('span', 'cell-secondary mono', shortCommit(success.commit)) : null),
       node('td', 'muted', success ? date(success.finishedAt) : 'No success found'),
@@ -430,8 +465,24 @@ function openNamespace(namespace) {
     ['Last success', namespace.lastSuccess ? date(namespace.lastSuccess.finishedAt, true) : 'Not recorded'],
     ['Latest attempt', badge(recordStatus(namespace.latestAttempt))],
   ]));
+  const launchSection = append(node('section', 'drawer-section'), node('h3', '', 'Open applications'));
+  const links = namespaceAccessLinks(namespace);
+  if (links.length) {
+    const list = node('div', 'namespace-launch-list');
+    links.forEach((recorded) => {
+      const link = applicationLink(`${recorded.label} ↗`, recorded.url, 'namespace-launch-link');
+      link.append(node('span', '', link.href));
+      list.append(link);
+    });
+    append(launchSection, list, node('p', 'drawer-note', 'These URLs were recorded by the deployment pipeline. Availability has not been checked.'), detailFields([
+      ['Source run', namespace.access.runId ? `#${namespace.access.runId}` : 'Not recorded'],
+      ['URLs recorded', date(namespace.access.observedAt, true)],
+    ]));
+  } else launchSection.append(node('p', 'drawer-note', 'No application URLs were recorded in the available pipeline logs.'));
+  content.append(launchSection);
   if (namespace.lastSuccess) content.append(button('Inspect last successful deployment', 'button secondary', () => openDeployment(namespace.lastSuccess, 'DEV')));
   if (namespace.latestAttempt && namespace.latestAttempt.runId !== namespace.lastSuccess?.runId) content.append(append(node('div', 'actions'), button('Inspect latest attempt', 'button secondary', () => openDeployment(namespace.latestAttempt, 'DEV'))));
+  if (links.length) content.append(evidenceLinks(namespace.access.evidence));
 }
 
 function openRelease(release) {

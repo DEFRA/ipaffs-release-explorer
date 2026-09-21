@@ -1,3 +1,5 @@
+import { parseNamespaceUrls } from './namespace-urls.mjs';
+
 const VERSION = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)';
 const SHA = '(?:[a-fA-F0-9]{64}|[a-fA-F0-9]{40})';
 const CANONICAL = ['DEV', 'TST', 'PRE', 'PRD'];
@@ -147,6 +149,26 @@ function devNamespace(run, detail) {
   if (/^RELEASE\/\d+\.\d+\.x$/.test(branch || '')) name = branch.slice(8).toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
   if (!validNamespace(name)) return null;
   return { name, confidence: 'inferred', evidence: evidence('Namespace inferred from source branch and existing YAML', run.url, 'inferred') };
+}
+
+function namespaceAccess(run, namespace, detail) {
+  if (isAbandonedRun(run)) return null;
+  const records = detail?.timeline?.records || [];
+  const publishers = records.filter(record => record.type === 'Task'
+    && /^(?:Publish namespace access URLs|Generate namespace URLs)$/i.test(record.name || ''));
+  const current = publishers.sort((a, b) => attempt(b) - attempt(a)
+    || time(b.startTime || b.finishTime) - time(a.startTime || a.finishTime))[0];
+  if (!isSuccess(current)) return null;
+  const stage = records.find(record => record.type === 'Stage'
+    && ['DEV_DeployChart', 'DEV_PublishNamespaceUrls'].includes(record.identifier)
+    && descendantOf(current, record, records));
+  const job = records.find(record => record.type === 'Job' && descendantOf(current, record, records));
+  if (!stage || !isSuccess(job) || attempt(stage) > attempt(current) || attempt(job) > attempt(current)) return null;
+  const log = detail?.logs?.find(item => findLogRecord(item, records)?.id === current.id);
+  const summary = log && parseNamespaceUrls(log.text);
+  if (!summary || summary.namespace !== namespace.name) return null;
+  return { links: summary.links, runId: run.id, observedAt: current.finishTime || run.finishedAt || null,
+    evidence: [evidence('Recorded namespace access URLs', logUrl(run, log), 'log')] };
 }
 
 function matchingEnvironmentRecords(environmentRecords, name, runId) {
@@ -300,8 +322,9 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
   const getDetail = id => details instanceof Map ? (details.get(id) || details.get(String(id))) : details[id];
   const allDeployments = [];
   const namespaceInfo = new Map();
+  const namespaceAccessByName = new Map();
   const releaseCandidates = [];
-  let missingTimelines = 0, unknownNamespaces = 0, inferredNamespaces = 0;
+  let missingTimelines = 0, inferredNamespaces = 0;
 
   for (const run of runs) {
     const detail = getDetail(run.id);
@@ -341,9 +364,13 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
     if (!['dev', 'release'].includes(kind)) continue;
     const dev = kind === 'dev';
     const ns = dev ? devNamespace(run, detail) : null;
-    if (dev && !ns) unknownNamespaces += 1;
     if (dev && ns?.confidence === 'inferred') inferredNamespaces += 1;
     if (dev && ns && !namespaceInfo.has(ns.name)) namespaceInfo.set(ns.name, { name: ns.name, kind: ns.name === 'dev' ? 'canonical' : /^refs\/heads\/RELEASE\//.test(run.sourceRef || '') ? 'release' : 'branch', branch: refBranch(run.sourceRef), confidence: ns.confidence });
+    if (dev && ns) {
+      const access = namespaceAccess(run, ns, detail);
+      const previous = namespaceAccessByName.get(ns.name);
+      if (access && (!previous || time(access.observedAt) > time(previous.observedAt))) namespaceAccessByName.set(ns.name, access);
+    }
     for (const envName of dev ? ['DEV'] : ['TST', 'PRE', 'PRD']) {
       const stages = records.filter(record => record.type === 'Stage' && record.identifier === `${envName}_DeployChart`);
       for (const stage of stages) {
@@ -374,10 +401,9 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
   }).sort(versionDescending);
   for (const release of releases) release.progress = candidateProgress(release, runs, allDeployments, getDetail, runsById, kindById);
   const envRows = CANONICAL.map(name => ({ name, namespace: name.toLowerCase(), ...lastStates(allDeployments.filter(item => item.environment === name && item.namespace === name.toLowerCase()), runsById) }));
-  const namespaces = [...namespaceInfo.values()].map(item => ({ ...item, ...lastStates(allDeployments.filter(deployment => deployment.environment === 'DEV' && deployment.namespace === item.name), runsById) })).sort((a, b) => a.name === 'dev' ? -1 : b.name === 'dev' ? 1 : a.name.localeCompare(b.name));
+  const namespaces = [...namespaceInfo.values()].map(item => ({ ...item, access: namespaceAccessByName.get(item.name) || null, ...lastStates(allDeployments.filter(deployment => deployment.environment === 'DEV' && deployment.namespace === item.name), runsById) })).sort((a, b) => a.name === 'dev' ? -1 : b.name === 'dev' ? 1 : a.name.localeCompare(b.name));
   const warningRows = [...warnings];
   if (missingTimelines) warningRows.push({ code: 'TIMELINE_COVERAGE', message: `${missingTimelines} run(s) have no loaded timeline; deployment and release evidence may be incomplete.` });
-  if (unknownNamespaces) warningRows.push({ code: 'UNKNOWN_DEV_NAMESPACE', message: `${unknownNamespaces} DEV run(s) have no reliable namespace mapping and are excluded from namespace state.` });
   if (inferredNamespaces) warningRows.push({ code: 'INFERRED_DEV_NAMESPACE', message: `${inferredNamespaces} DEV namespace mapping(s) are inferred from branch naming because a successful resolver log was unavailable.` });
   if (limits.truncated || limits.buildsTruncated || limits.logsTruncated) warningRows.push({ code: 'BOUNDED_HISTORY', message: 'The loaded history is bounded; an older successful deployment or release may be outside this snapshot.' });
   if (releases.some((release, index) => releases.slice(index + 1).some(other => release.version === other.version && release.commit !== other.commit))) warningRows.push({ code: 'RELEASE_TAG_CONFLICT', message: 'A release version was observed at different commits. Both records are shown; the current Git tag cannot be verified through historical ADO logs alone.' });

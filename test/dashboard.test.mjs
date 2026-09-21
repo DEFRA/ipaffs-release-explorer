@@ -19,7 +19,7 @@ const createRun = (overrides = {}) => ({
   queueTime: changedAt, startTime: changedAt, finishTime: changedAt, ...overrides,
 });
 
-function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {}, qaEvidence = {}, retentionPolicy, now } = {}) {
+function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {}, logs = {}, qaEvidence = {}, retentionPolicy, now } = {}) {
   let runs = initialRuns;
   let policy = retentionPolicy;
   const failures = new Map();
@@ -63,6 +63,7 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelin
       const log = path.match(/^build\/builds\/(\d+)\/logs\/(\d+)$/);
       if (log) {
         assert.equal(url.searchParams.get('api-version'), '7.1');
+        if (Object.hasOwn(logs, log[2])) return new Response(logs[log[2]]);
         if (Number(log[2]) === 18) return new Response(JSON.stringify(qaEvidence[log[1]] || { id: linkedQa.id, definition: linkedQa.definition }));
         return new Response(`Created tag '${versions[log[1]] || '4.2.0'}' at ${sha}`);
       }
@@ -83,6 +84,34 @@ function assertOnlyApiRequests(calls) {
   assert.ok(calls.every(url => url.pathname.includes('/_apis/')));
   assert.equal(calls.some(url => url.pathname.includes('/_build/')), false);
 }
+
+test('namespace launch URLs load from selected ADO task logs without fetching application destinations', async () => {
+  for (const [name, stageIdentifier] of [
+    ['Publish namespace access URLs', 'DEV_DeployChart'],
+    ['Generate namespace URLs', 'DEV_PublishNamespaceUrls'],
+  ]) {
+    const run = createRun({ definition: { id: config.pipelines.dev, name: 'Deploy DEV' }, sourceBranch: 'refs/heads/feature/example' });
+    const records = [
+      { id: 'resolver', type: 'Task', name: 'Resolve namespace', state: 'completed', result: 'succeeded', log: { id: 20 } },
+      { id: 'stage', type: 'Stage', identifier: stageIdentifier, state: 'completed', result: 'succeeded' },
+      { id: 'job', parentId: 'stage', type: 'Job', state: 'completed', result: 'succeeded' },
+      { id: 'publisher', parentId: 'job', type: 'Task', name, state: 'completed', result: 'succeeded', finishTime: changedAt, log: { id: 21 } },
+      { id: 'unrelated', type: 'Task', name: 'Checkout', log: { id: 22 } },
+    ];
+    const lines = ['# Namespace access URLs', '- Environment: `DEV`', '- Namespace: `feature-example`', '- B2C base URL: https://app.example.invalid', '- B2C notifications URL: https://app.example.invalid/notifications'];
+    const source = fixture([run], { timelines: { 501: { records } }, logs: {
+      20: 'Using namespace: feature-example\n',
+      21: JSON.stringify({ value: lines.map(line => `${changedAt} ${line}`) }),
+    } });
+    const data = await source.service.get();
+    assert.equal(data.namespaces[0].access.links.length, 2);
+    assert.equal(data.namespaces[0].access.runId, 501);
+    assert.deepEqual(data.warnings, []);
+    assert.deepEqual(source.calls.filter(url => /\/logs\//.test(url.pathname)).map(url => url.pathname.split('/').at(-1)).sort(), ['20', '21']);
+    assert.ok(source.calls.every(url => url.hostname === 'dev.azure.com'));
+    assertOnlyApiRequests(source.calls);
+  }
+});
 
 test('API status excludes abandoned and canceled creation while genuine candidates awaiting deployment remain visible', async () => {
   const source = fixture([

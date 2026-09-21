@@ -129,7 +129,7 @@ test('exact successful resolver overrides branch assumptions, including branch d
 test('failed resolver is unknown even when log emitted a namespace before failure', () => {
   const data = model([devBuild(1, { result: 'failed' })], [[1, detail([resolverRecord({ result: 'failed' })], [{ id: 27, recordName: 'Resolve namespace', text: 'Using namespace: dev\n' }])]]);
   assert.deepEqual(data.namespaces, []);
-  assert.ok(data.warnings.some(item => item.code === 'UNKNOWN_DEV_NAMESPACE'));
+  assert.equal(data.warnings.some(item => item.code === 'UNKNOWN_DEV_NAMESPACE'), false);
 });
 
 test('a failed resolver retry cannot reuse namespace evidence from a previous successful attempt', () => {
@@ -144,6 +144,88 @@ test('missing resolver logs permit clearly marked predictable inference but neve
   assert.equal(data.namespaces[0].name, '4-2-x');
   assert.equal(data.namespaces[0].confidence, 'inferred');
   assert.equal(env(data, 'DEV').lastSuccess, null);
+});
+
+const urlSummary = (namespace = 'feature-example', host = 'app.example.invalid') => `# Namespace access URLs
+- Environment: \`DEV\`
+- Namespace: \`${namespace}\`
+- B2C base URL: https://${host}
+- B2B base URL: https://internal.${host}
+- B2C notifications URL: https://${host}/notification/DEV/protected/notifications
+- B2B notifications URL: https://internal.${host}/notification/DEV/protected/notifications`;
+function accessDetail({ name = 'Publish namespace access URLs', stageId = 'DEV_DeployChart', namespace = 'feature-example', text = urlSummary(namespace), task = {}, job = {}, extraRecords = [] } = {}) {
+  return detail([
+    resolverRecord(),
+    ...chartTimeline('DEV', job, { identifier: stageId }),
+    { id: 'urls', type: 'Task', name, parentId: 'job-DEV', state: 'completed', result: 'succeeded', attempt: 1, startTime: at(9), finishTime: at(9), log: { id: 29 }, ...task },
+    ...extraRecords,
+  ], [
+    { id: 27, recordName: 'Resolve namespace', text: `Using namespace: ${namespace}\n` },
+    { id: 29, recordName: name, text },
+  ]);
+}
+
+test('mapped DEV namespaces expose recorded access URLs with source evidence from both publisher layouts', () => {
+  for (const options of [{}, { name: 'Generate namespace URLs', stageId: 'DEV_PublishNamespaceUrls' }]) {
+    const data = model([devBuild(1)], [[1, accessDetail(options)]]);
+    const access = data.namespaces[0].access;
+    assert.equal(access.links.length, 4);
+    assert.equal(access.links.find(link => link.kind === 'b2c-notifications').url, 'https://app.example.invalid/notification/DEV/protected/notifications');
+    assert.equal(access.runId, 1);
+    assert.equal(access.observedAt, at(9));
+    assert.match(access.evidence[0].url, /buildId=1.*l=29/);
+  }
+});
+
+test('namespace links require matching namespace, DEV context, successful task and job', () => {
+  for (const options of [
+    { text: urlSummary('other-namespace') },
+    { text: urlSummary().replace('`DEV`', '`TST`') },
+    { stageId: 'TST_DeployChart' },
+    { name: 'Checkout' },
+    { task: { result: 'failed' } },
+    { task: { state: 'inProgress', result: null } },
+    { job: { result: 'failed' } },
+    { task: { parentId: 'missing' } },
+    { text: urlSummary().replace('https://app.example.invalid', 'javascript:alert(1)') },
+  ]) {
+    const data = model([devBuild(1)], [[1, accessDetail(options)]]);
+    assert.equal(data.namespaces[0].access, null, JSON.stringify(options));
+  }
+  for (const status of ['abandoned', 'canceled']) {
+    assert.equal(model([devBuild(1, { status })], [[1, accessDetail()]]).namespaces[0].access, null);
+  }
+});
+
+test('unmapped DEV runs are silently excluded even if a URL log names a namespace', () => {
+  const source = accessDetail();
+  source.timeline.records.find(item => item.id === 'resolver').result = 'failed';
+  const data = model([devBuild(1)], [[1, source]]);
+  assert.deepEqual(data.namespaces, []);
+  assert.deepEqual(data.warnings, []);
+});
+
+test('a failed publisher retry cannot reuse an earlier successful log within the run', () => {
+  const source = accessDetail({ extraRecords: [{ id: 'urls-retry', type: 'Task', name: 'Publish namespace access URLs', parentId: 'job-DEV', state: 'completed', result: 'failed', attempt: 2, log: { id: 30 } }] });
+  assert.equal(model([devBuild(1)], [[1, source]]).namespaces[0].access, null);
+  const retriedJob = accessDetail({ job: { attempt: 2 } });
+  assert.equal(model([devBuild(1)], [[1, retriedJob]]).namespaces[0].access, null);
+});
+
+test('namespace links use the latest successful publication and retain its provenance across newer runs without URLs', () => {
+  const earlyQueueLatePublish = accessDetail({ task: { finishTime: at(12) }, text: urlSummary('feature-example', 'latest.example.invalid') });
+  const lateQueueEarlyPublish = accessDetail({ task: { finishTime: at(10) } });
+  const unpublished = accessDetail({ task: { result: 'skipped' } });
+  const data = model([devBuild(1), devBuild(2), devBuild(3)], [[1, earlyQueueLatePublish], [2, lateQueueEarlyPublish], [3, unpublished]]);
+  assert.equal(data.namespaces[0].access.runId, 1);
+  assert.equal(data.namespaces[0].access.observedAt, at(12));
+  assert.equal(data.namespaces[0].access.links[0].url, 'https://latest.example.invalid/');
+});
+
+test('a mapped namespace without a recorded URL summary has no invented links', () => {
+  const data = model([devBuild(1)], [[1, detail(chartTimeline('DEV'))]]);
+  assert.equal(data.namespaces[0].name, 'dev');
+  assert.equal(data.namespaces[0].access, null);
 });
 
 test('QA child extraction handles timestamps and requires structured pipeline identity', () => {

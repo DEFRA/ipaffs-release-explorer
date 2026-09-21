@@ -45,6 +45,15 @@ export function sampleDashboard() {
       { id: 99, pipeline: 'Release Pipeline', buildNumber: '4.1.3', sourceRef: 'refs/tags/4.1.3', commit: 'b'.repeat(40), status: 'completed', result: 'succeeded', queuedAt: at(121), startedAt: at(120.2), finishedAt: at(120), url: url(99) },
     ],
   };
+  dashboard.namespaces[1].access = {
+    runId: 102, observedAt: at(4), evidence: evidence(102),
+    links: [
+      { kind: 'b2c-base', label: 'B2C base', url: 'https://app.example.invalid/' },
+      { kind: 'b2b-base', label: 'B2B base', url: 'https://internal.example.invalid/' },
+      { kind: 'b2c-notifications', label: 'B2C notifications', url: 'https://app.example.invalid/notifications' },
+      { kind: 'b2b-notifications', label: 'B2B notifications', url: 'https://internal.example.invalid/notifications' },
+    ],
+  };
   const progress = (environment, deployment, status = 'deployed', label = environment === 'DEV' ? 'Commit deployed' : 'Deployed') => ({
     environment, status, label,
     detail: environment === 'DEV'

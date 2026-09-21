@@ -53,6 +53,7 @@ Individual run evidence is accessible through environment and candidate details.
 | --- | --- | --- |
 | Last recorded deployment in TST/PRE/PRD | Per-environment deployment jobs/stages in the release timeline | A successful pipeline operation is not live cluster health. |
 | DEV namespaces deployed by these pipelines | The namespace resolver's `Using namespace:` log line | Deleted or expired logs leave the namespace unknown; this is not a live inventory of namespaces. |
+| DEV application launch links | Existing namespace access URL summaries in successful publishing task logs | Only recorded URLs are shown; their availability is not checked. |
 | Release candidates and effective manifest commit | Successful Create Release task logs | Tags absent from retained pipeline history cannot be enumerated without another source. |
 | Approvals and progress | Native stage results, including incomplete release runs | Overall run status is not the result of every environment. |
 | Linked QA result | Child run ID in the existing QA trigger log, then the child's current ADO result | The request does not record the exact manifest revision tested. |
@@ -62,6 +63,20 @@ Each result includes an ADO link for inspection. The dashboard keeps the last
 successful recorded deployment separate from the latest attempt. An older
 version deployed later (rollback) can be the last success. No claim is made that
 a prior version still runs after a failed deployment or an out-of-band change.
+
+DEV runs without a reliable namespace mapping are silently omitted from the
+namespace list. For mapped namespaces, **Open B2C** and **Open B2B** use the
+recorded notifications URLs, falling back to recorded base URLs when necessary.
+Namespace details show all recorded URLs and the source pipeline run and date.
+The most recent successful URL publication is retained even when a newer run
+does not publish URLs. A namespace without a matching summary shows **No URLs
+recorded**; hostnames are never guessed. Both the older **Publish namespace access
+URLs** task and the newer **Generate namespace URLs** task are supported.
+
+Launch links must come from a successful DEV publishing task and job, match the
+mapped namespace, and use HTTPS without embedded credentials, query strings or
+fragments. The server reads the existing ADO logs only; it does not contact the
+application URLs or retrieve the ADO summary web page. Links open in a new tab.
 
 Runs that failed request validation before execution do not produce missing-history
 warnings or inferred DEV namespaces. This requires a completed, failed run with
