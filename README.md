@@ -47,6 +47,33 @@ Automatic refresh uses the normal dashboard endpoint and its 90-second server
 cache. The **Refresh** button remains available to request a new scan immediately.
 Individual run evidence is accessible through environment and candidate details.
 
+## Releases
+
+The **Releases** tab keeps current **Release candidates** at the top, grouped by
+major/minor version. **Previous releases** below shows release identities with a
+recorded successful PRD deployment; those identities no longer appear among the
+candidates. The latest recorded PRD version is marked in the history.
+
+Previous releases come directly from tagged release-run deployment evidence, so
+they do not depend on retained Create Release logs. Each row shows the latest
+successful deployment completion time in DEV/TST/PRE/PRD. Select an environment
+to inspect all successful deployments present in the loaded timelines, including
+redeployments, their original run requesters and ADO links. DEV matches the
+manifest commit in a recorded namespace; it does not establish deployment of the
+release tag itself.
+
+History is ordered by the latest successful PRD completion, so an older version
+redeployed later appears first. A tag at different commits remains separate.
+Successful deployments remain recorded even if their parent pipeline was later
+failed, canceled or abandoned. Failed attempts are kept separate from successful
+deployment dates. Missing timestamps and unavailable environment history remain
+explicit; no queue or whole-pipeline finish time is substituted.
+
+This is bounded deployment history from the scanned runs, not continuous runtime
+observation or a complete audit archive. Deleted runs and older retry timelines
+that ADO no longer returns cannot be reconstructed. No new API calls, database,
+permissions or pipeline changes are needed for this view.
+
 ## What existing data can tell us
 
 | Information | Existing evidence | Limit |
@@ -55,6 +82,7 @@ Individual run evidence is accessible through environment and candidate details.
 | DEV namespaces deployed by these pipelines | The namespace resolver's `Using namespace:` log line | Deleted or expired logs leave the namespace unknown; this is not a live inventory of namespaces. |
 | DEV application launch links | Existing namespace access URL summaries in successful publishing task logs | Only recorded URLs are shown; their availability is not checked. |
 | Release candidates and effective manifest commit | Successful Create Release task logs | Tags absent from retained pipeline history cannot be enumerated without another source. |
+| Previous releases and deployment dates | Successful PRD deployment, source tag and manifest commit, plus matching per-environment timelines | Limited to retained scanned runs and attempts; missing dates are not inferred. |
 | Approvals and progress | Native stage results, including incomplete release runs | Overall run status is not the result of every environment. |
 | Linked QA result | Child run ID in the existing QA trigger log, then the child's current ADO result | The request does not record the exact manifest revision tested. |
 | Failures and reruns | Timeline outcomes and attempts | Older attempts may not be retained; uncertainty is shown rather than guessed. |

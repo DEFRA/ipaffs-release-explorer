@@ -15,7 +15,7 @@ export function sampleDashboard() {
   const pre = deploy(100, 'PRE', '4.2.0', 'succeeded', 12);
   const dev = deploy(101, 'DEV', 'master', 'succeeded', 1);
   dev.trigger = { reason: 'batchedCI', requestedBy: 'Example build service', requestedFor: 'Example build service' };
-  const previousPrd = { ...deploy(99, 'PRD', '4.1.3', 'succeeded', 120), commit: 'b'.repeat(40) };
+  const previousPrd = { ...deploy(99, 'PRD', '4.1.3', 'succeeded', 120), commit: 'b'.repeat(40), versionKind: 'release-tag', sourceRef: 'refs/tags/4.1.3' };
   const dashboard = {
     readOnly: true, mode: 'sample', organization, project, fetchedAt: now.toISOString(),
     limits: { runCount: 3, retrievedRuns: 3, runsPerPipeline: 100, limited: true, scope: 'Illustrative sample data; no live ADO requests.' },
@@ -44,6 +44,8 @@ export function sampleDashboard() {
       { id: 101, pipeline: 'Deploy DEV', buildNumber: 'sample-dev', sourceRef: 'refs/heads/master', commit: 'a'.repeat(40), status: 'completed', result: 'succeeded', queuedAt: at(1.3), startedAt: at(1.2), finishedAt: at(1), url: url(101) },
       { id: 100, pipeline: 'Release Pipeline', buildNumber: '4.2.0', sourceRef: 'refs/tags/4.2.0', commit: 'a'.repeat(40), status: 'inProgress', result: null, queuedAt: at(24.3), startedAt: at(24.2), finishedAt: null, url: url(100) },
       { id: 99, pipeline: 'Release Pipeline', buildNumber: '4.1.3', sourceRef: 'refs/tags/4.1.3', commit: 'b'.repeat(40), status: 'completed', result: 'succeeded', queuedAt: at(121), startedAt: at(120.2), finishedAt: at(120), url: url(99) },
+      { id: 98, pipeline: 'Release Pipeline', buildNumber: '4.1.2', sourceRef: 'refs/tags/4.1.2', commit: 'c'.repeat(40), status: 'completed', result: 'succeeded', queuedAt: at(145), startedAt: at(144.2), finishedAt: at(144), url: url(98) },
+      { id: 97, pipeline: 'Release Pipeline', buildNumber: '4.1.3', sourceRef: 'refs/tags/4.1.3', commit: 'b'.repeat(40), status: 'completed', result: 'succeeded', queuedAt: at(130), startedAt: at(128.2), finishedAt: at(128), url: url(97) },
     ],
   };
   for (const deployment of [dashboard.namespaces[1].lastSuccess, dashboard.namespaces[1].latestAttempt]) {
@@ -79,5 +81,28 @@ export function sampleDashboard() {
   ];
   dashboard.releases[1].progress = [missing('DEV'), missing('TST'), missing('PRE'), progress('PRD', previousPrd)];
   dashboard.releases[2].progress = ['DEV', 'TST', 'PRE', 'PRD'].map(missing);
+  const historicalDeployment = (id, environment, version, hours, commit) => ({
+    ...deploy(id, environment, version, 'succeeded', hours), commit,
+    versionKind: 'release-tag', sourceRef: `refs/tags/${version}`,
+    trigger: { reason: 'manual', requestedBy: 'Example operator', requestedFor: 'Example operator' },
+  });
+  const historicalProgress = (environment, deployments) => ({
+    ...(deployments.length ? progress(environment, deployments[0]) : missing(environment)), deployments,
+    evidence: deployments.flatMap(deployment => deployment.evidence),
+  });
+  dashboard.previousReleases = [
+    { ...dashboard.releases[1], history: true, observedAt: at(120), progress: [
+      historicalProgress('DEV', []),
+      historicalProgress('TST', [historicalDeployment(97, 'TST', '4.1.3', 130, 'b'.repeat(40))]),
+      historicalProgress('PRE', [historicalDeployment(97, 'PRE', '4.1.3', 129, 'b'.repeat(40))]),
+      historicalProgress('PRD', [historicalDeployment(99, 'PRD', '4.1.3', 120, 'b'.repeat(40)), historicalDeployment(97, 'PRD', '4.1.3', 128, 'b'.repeat(40))]),
+    ] },
+    { ...dashboard.releases[2], history: true, observedAt: at(144), progress: [
+      historicalProgress('DEV', []), historicalProgress('TST', []), historicalProgress('PRE', []),
+      historicalProgress('PRD', [historicalDeployment(98, 'PRD', '4.1.2', 144, 'c'.repeat(40))]),
+    ] },
+  ].map(({ outcome, ...release }) => release);
+  dashboard.limits.runCount = dashboard.runs.length;
+  dashboard.limits.retrievedRuns = dashboard.runs.length;
   return dashboard;
 }

@@ -29,7 +29,7 @@
     <div id="dashboard" hidden>
       <div class="tabs" role="tablist" aria-label="Release explorer views">
         <button id="tab-overview" role="tab" aria-selected="true" aria-controls="panel-overview" data-tab="overview">Overview</button>
-        <button id="tab-releases" role="tab" aria-selected="false" aria-controls="panel-releases" tabindex="-1" data-tab="releases">Release candidates <span id="release-count" class="count">0</span></button>
+        <button id="tab-releases" role="tab" aria-selected="false" aria-controls="panel-releases" tabindex="-1" data-tab="releases">Releases <span id="release-count" class="count">0</span></button>
       </div>
       <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
         <div class="section-heading"><div><h2>Environments</h2><p>Last successful deployment recorded by ADO. Cluster health is not observed.</p></div><span class="section-label">DEV → TST → PRE → PRD</span></div>
@@ -38,7 +38,13 @@
         <section class="surface evidence-section"><div class="surface-heading"><div><h2>What the data can tell us</h2><p>Coverage and limits of existing pipeline evidence.</p></div></div><div id="coverage" class="coverage-grid"></div><div id="warnings" class="warnings"></div></section>
       </section>
       <section id="panel-releases" role="tabpanel" aria-labelledby="tab-releases" hidden>
-        <div class="section-heading"><div><h2>Release candidates</h2><p>Recorded progress from DEV to PRD. Abandoned runs are ignored. Expand a series to inspect earlier patches; select an environment for its evidence.</p></div></div><div id="release-list" class="release-list"></div>
+        <section class="releases-section" aria-labelledby="release-candidates-heading">
+          <div class="section-heading"><div><h2 id="release-candidates-heading">Release candidates</h2><p>Releases without a successful PRD deployment in the scanned history. Expand a series to inspect earlier patches; select an environment for its evidence.</p></div></div><div id="release-list" class="release-list"></div>
+        </section>
+        <section class="releases-section" aria-labelledby="previous-releases-heading">
+          <div class="section-heading"><div><h2 id="previous-releases-heading">Previous releases</h2><p>Releases with a successful PRD deployment, newest deployment first. Dates show the latest successful deployment to each environment; select an environment to see all recorded deployments.</p></div></div><div id="previous-release-list" class="release-list"></div>
+          <p class="release-history-note">History is limited to the ADO records available in this scan. Deployment records do not confirm current cluster state.</p>
+        </section>
       </section>
       <footer class="page-footer"><span>Existing ADO records · No pipeline changes · No database</span><span id="scan-window"></span></footer>
     </div>

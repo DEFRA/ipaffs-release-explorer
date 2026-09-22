@@ -251,6 +251,22 @@ test('validation metadata does not suppress timeline permission, transport or se
   }
 });
 
+test('previous releases use existing deployment requests and refresh when PRD completes', async () => {
+  const records = [{ id: 'prd-stage', type: 'Stage', identifier: 'PRD_DeployChart', state: 'inProgress', result: null, startTime: changedAt }];
+  const source = fixture([createRun({
+    definition: { id: config.pipelines.release, name: 'Example release' },
+    sourceBranch: 'refs/tags/4.2.0', status: 'inProgress', result: null,
+  })], { timelines: { 501: { records } } });
+  assert.deepEqual((await source.service.get()).previousReleases, []);
+  Object.assign(records[0], { state: 'completed', result: 'succeeded', finishTime: changedAt });
+  const data = await source.service.get({ refresh: true });
+  assert.equal(data.previousReleases[0].version, '4.2.0');
+  assert.equal(data.previousReleases[0].progress[3].lastSuccess.finishedAt, changedAt);
+  assert.deepEqual(data.releases, []);
+  assert.equal(source.service.run(501).stages[0].status, 'succeeded');
+  assert.equal(source.calls.length, 12, 'Each scan uses only four pipeline lists, one timeline and the existing environment list');
+});
+
 test('nonempty deployment evidence takes precedence over validation errors in a failed run', async () => {
   const record = (environment, result) => ({
     id: `stage-${environment}`, type: 'Stage', name: `Deploy ${environment}`,

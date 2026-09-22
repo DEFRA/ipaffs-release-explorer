@@ -20,6 +20,122 @@ const releaseLog = text => ({ id: 17, recordName: 'Create release branch or next
 const resolverRecord = (overrides = {}) => ({ id: 'resolver', type: 'Task', name: 'Resolve namespace', state: 'completed', result: 'succeeded', log: { id: 27 }, ...overrides });
 const devBuild = (id, overrides = {}) => build(id, { _kind: 'dev', definition: { id: 101, name: 'Deploy DEV' }, sourceBranch: 'refs/heads/master', buildNumber: '20350315.6', ...overrides });
 
+test('previous releases come from successful PRD deployments without creation logs', () => {
+  const data = model([build(1, { finishTime: at(15), reason: 'manual', requestedBy: { displayName: 'Example operator' } })], [[1, detail([
+    ...chartTimeline('TST', { finishTime: at(4) }),
+    ...chartTimeline('PRE', { finishTime: at(6) }),
+    ...chartTimeline('PRD', { finishTime: at(10) }),
+  ])]]);
+  assert.deepEqual(data.releases, []);
+  const [release] = data.previousReleases;
+  assert.equal(release.version, '4.2.0');
+  assert.equal(release.commit, sha);
+  assert.equal(release.history, true);
+  assert.equal(release.observedAt, at(10));
+  assert.deepEqual(release.progress.slice(1).map(item => item.lastSuccess.finishedAt), [at(4), at(6), at(10)]);
+  assert.equal(release.progress[0].status, 'not-recorded');
+  assert.equal(release.progress[0].lastSuccess, null);
+  assert.equal(release.progress[3].deployments[0].trigger.requestedBy, 'Example operator');
+  assert.match(release.url, /buildId=1/);
+});
+
+test('production deployment history survives later failed, canceled and abandoned parents', () => {
+  for (const overrides of [{ result: 'failed' }, { result: 'canceled' }, { status: 'abandoned' }]) {
+    const data = model([build(1, overrides)], [[1, detail(chartTimeline('PRD'))]]);
+    assert.equal(data.previousReleases.length, 1);
+    assert.equal(data.previousReleases[0].progress[3].lastSuccess.status, 'succeeded');
+  }
+});
+
+test('only successful PRD deployments move an identity into previous releases', () => {
+  for (const result of ['failed', 'canceled', 'skipped', 'partiallySucceeded', null]) {
+    const data = model([build(1)], [[1, detail([
+      ...chartTimeline('TST'), ...chartTimeline('PRE'),
+      ...chartTimeline('PRD', { result, state: result ? 'completed' : 'pending' }, { result, state: result ? 'completed' : 'pending' }),
+    ])]]);
+    assert.deepEqual(data.previousReleases, []);
+  }
+  const pending = model([releaseBuild(1)], [[1, detail([releaseRecord()], [releaseLog(`Created tag '4.2.0' at ${sha}`)])]]);
+  assert.equal(pending.releases.length, 1);
+  assert.deepEqual(pending.previousReleases, []);
+});
+
+test('history requires an exact release tag and full commit, retaining conflicting identities', () => {
+  for (const overrides of [
+    { sourceBranch: 'refs/heads/4.2.0' }, { sourceBranch: '4.2.0' }, { sourceBranch: 'refs/tags/4.02.0' },
+    { sourceVersion: 'abcdef12' }, { sourceVersion: null },
+  ]) assert.deepEqual(model([build(1, overrides)], [[1, detail(chartTimeline('PRD'))]]).previousReleases, []);
+  const data = model([build(1), build(2, { sourceVersion: otherSha.toUpperCase() })], [
+    [1, detail(chartTimeline('PRD', { finishTime: at(8) }))],
+    [2, detail(chartTimeline('PRD', { finishTime: at(10) }))],
+  ]);
+  assert.deepEqual(data.previousReleases.map(item => item.commit), [otherSha, sha]);
+  assert.deepEqual(data.previousReleases.map(item => item.progress[3].deployments.length), [1, 1]);
+  assert.ok(data.warnings.some(item => item.code === 'RELEASE_TAG_CONFLICT'));
+});
+
+test('previous releases sort by successful PRD completion and retain repeated deployments', () => {
+  const data = model([
+    build(1, { sourceVersion: sha.toUpperCase() }),
+    build(2, { sourceBranch: 'refs/tags/4.3.0', sourceVersion: otherSha }),
+    build(3), build(4, { result: 'failed' }),
+  ], [
+    [1, detail(chartTimeline('PRD', { startTime: at(4), finishTime: at(4) }))],
+    [2, detail(chartTimeline('PRD', { startTime: at(7), finishTime: at(7) }))],
+    [3, detail(chartTimeline('PRD', { startTime: at(10), finishTime: at(10), attempt: 2 }))],
+    [4, detail(chartTimeline('PRD', { startTime: at(12), finishTime: at(12), result: 'failed' }, { result: 'failed' }))],
+  ]);
+  assert.deepEqual(data.previousReleases.map(item => item.version), ['4.2.0', '4.3.0']);
+  const prd = data.previousReleases[0].progress[3];
+  assert.equal(prd.status, 'deployed');
+  assert.equal(prd.lastSuccess.runId, 3);
+  assert.equal(prd.latestAttempt.runId, 4);
+  assert.deepEqual(prd.deployments.map(item => item.runId), [3, 1]);
+  assert.equal(data.previousReleases[0].observedAt, at(10));
+  assert.match(prd.detail, /latest recorded attempt/);
+});
+
+test('historical environment dates never borrow another commit or pipeline finish time', () => {
+  const data = model([build(1), build(2, { sourceVersion: otherSha })], [
+    [1, detail(chartTimeline('PRD', { finishTime: null }))],
+    [2, detail([...chartTimeline('TST'), ...chartTimeline('PRE')])],
+  ]);
+  const [release] = data.previousReleases;
+  assert.equal(release.observedAt, null);
+  assert.equal(release.progress[3].lastSuccess.finishedAt, null);
+  for (const item of release.progress.slice(0, 3)) {
+    assert.equal(item.status, 'not-recorded');
+    assert.deepEqual(item.deployments, []);
+  }
+});
+
+test('history keeps retained successful job attempts when a later retry fails', () => {
+  const records = chartTimeline('PRD', { result: 'failed', attempt: 2, finishTime: at(12) }, { result: 'failed', attempt: 2 });
+  records.push(chartJob('PRD', { id: 'previous-prd-job', attempt: 1, startTime: at(8), finishTime: at(8) }));
+  const [release] = model([build(1, { result: 'failed' })], [[1, detail(records)]]).previousReleases;
+  assert.equal(release.observedAt, at(8));
+  assert.equal(release.progress[3].lastSuccess.attempt, 1);
+  assert.equal(release.progress[3].latestAttempt.attempt, 2);
+  assert.equal(release.progress[3].deployments.length, 1);
+});
+
+test('previous releases only use DEV commits with recorded namespace mapping', () => {
+  const resolver = resolverRecord();
+  const data = model([build(1), devBuild(2), devBuild(3, { sourceVersion: otherSha })], [
+    [1, detail(chartTimeline('PRD'))],
+    [2, detail([...chartTimeline('DEV'), resolver], [{ id: 27, recordName: 'Resolve namespace', text: 'Using namespace: sample-dev' }])],
+    [3, detail(chartTimeline('DEV', { finishTime: at(15) }))],
+  ]);
+  const dev = data.previousReleases[0].progress[0];
+  assert.equal(dev.status, 'deployed');
+  assert.equal(dev.matchedBy, 'commit');
+  assert.equal(dev.lastSuccess.namespace, 'sample-dev');
+  assert.equal(dev.lastSuccess.runId, 2);
+  assert.match(dev.detail, /does not establish deployment of the release tag/);
+  const noResolver = model([build(1), devBuild(2)], [[1, detail(chartTimeline('PRD'))], [2, detail(chartTimeline('DEV'))]]);
+  assert.equal(noResolver.previousReleases[0].progress[0].status, 'not-recorded');
+});
+
 test('only post-push release evidence is parsed, including timestamped log lines', () => {
   const result = parseReleaseEvidence(`2035-03-09T12:17:49.65Z Release branch: RELEASE/4.2.x\n2035-03-09T12:17:49.66Z Created tag '4.2.10' at ${sha}\nCompleted. Branch 'RELEASE/4.2.x' and tag '4.2.10' are aligned to ${sha}.`);
   assert.equal(result.length, 1);

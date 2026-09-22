@@ -268,7 +268,7 @@ function renderDashboard() {
   $('notice').replaceChildren();
   $('notice').hidden = !sample;
   if (sample) append($('notice'), node('span', '', 'You’re exploring sample data. These are illustrative releases and deployments, not your ADO records.'), button('Try live ADO', 'button text', () => loadDashboard('live', true)));
-  $('release-count').textContent = array(data.releases).length;
+  $('release-count').textContent = new Set([...array(data.releases), ...array(data.previousReleases)].map(releaseIdentity)).size;
   renderEnvironments();
   renderNamespaces();
   renderCoverage();
@@ -357,12 +357,18 @@ function compareVersions(a, b) {
   return String(b.observedAt || '').localeCompare(String(a.observedAt || ''));
 }
 
+function releaseIdentity(release) {
+  return JSON.stringify([release.version || '', String(release.commit || '').toLowerCase()]);
+}
+
 function renderReleases() {
   const container = $('release-list');
   const expanded = new Set([...container.querySelectorAll('.release-expander[open]')].map((item) => item.dataset.series));
   container.replaceChildren();
-  const releases = array(state.data.releases).slice().sort(compareVersions);
-  if (!releases.length) return container.append(append(node('div', 'surface'), empty('No release candidates found', 'Candidates require retained release-tag evidence from a run whose current state can be checked. Abandoned runs are excluded.')));
+  const previous = array(state.data.previousReleases);
+  const released = new Set(previous.map(releaseIdentity));
+  const releases = array(state.data.releases).filter((release) => !released.has(releaseIdentity(release))).sort(compareVersions);
+  if (!releases.length) container.append(append(node('div', 'surface'), empty('No release candidates found', 'No eligible release-tag evidence without a successful PRD deployment was found in the scanned history. Abandoned runs are excluded from candidates.')));
   const groups = new Map();
   releases.forEach((release) => {
     const series = release.series || String(release.version || 'Unknown').split('.').slice(0, 2).join('.');
@@ -385,6 +391,10 @@ function renderReleases() {
     append(group, details, preview);
     container.append(group);
   });
+  const history = $('previous-release-list');
+  history.replaceChildren();
+  if (!previous.length) history.append(append(node('div', 'surface'), empty('No previous releases found', 'No successful PRD deployment with a recorded release version and manifest commit was found in the scanned history.')));
+  previous.forEach((release) => history.append(append(node('article', 'release-group previous-release'), releasePatch(release))));
 }
 
 function releasePatch(release, latest) {
@@ -392,7 +402,12 @@ function releasePatch(release, latest) {
   const version = button(release.version || 'Unknown version', 'row-trigger patch-version', () => openRelease(release));
   const identity = append(node('div', 'patch-identity'), version);
   if (latest) identity.append(node('span', 'badge neutral', 'Latest patch'));
-  append(patch, append(node('div', 'patch-heading'), identity, append(node('div', 'patch-meta'), node('span', 'mono', shortCommit(release.commit)), node('span', '', `Observed ${date(release.observedAt)}`))), releaseProgress(release));
+  const currentPrd = array(state.data.environments).find((environment) => environment.name === 'PRD')?.lastSuccess;
+  if (release.history && currentPrd?.versionKind === 'release-tag' && currentPrd.sourceRef === `refs/tags/${release.version}`
+    && releaseIdentity(release) === releaseIdentity(currentPrd)) identity.append(node('span', 'badge success latest-prd-badge', 'Latest recorded in PRD'));
+  const observed = node('span', '', release.history ? `Last PRD deployment ${date(release.observedAt)}` : `Observed ${date(release.observedAt)}`);
+  observed.title = date(release.observedAt, true);
+  append(patch, append(node('div', 'patch-heading'), identity, append(node('div', 'patch-meta'), node('span', 'mono', shortCommit(release.commit)), observed)), releaseProgress(release));
   return patch;
 }
 
@@ -427,10 +442,16 @@ function releaseProgress(release) {
     control.setAttribute('aria-label', `${progress.environment}: ${label}. View evidence for ${release.version || 'this release'}`);
     if (progress.detail) control.title = progress.detail;
     append(control, node('span', 'progress-environment', progress.environment), node('span', 'progress-label', label));
-    const record = progress.latestAttempt || progress.lastSuccess;
-    const timestamp = record?.finishedAt || record?.startedAt;
-    if (timestamp) control.append(node('span', 'progress-time', date(timestamp)));
-    if (progress.lastSuccess && distinctAttempt(progress)) control.append(node('span', 'progress-prior', 'Earlier success recorded'));
+    const record = release.history ? progress.lastSuccess : progress.latestAttempt || progress.lastSuccess;
+    const timestamp = release.history ? record?.finishedAt : record?.finishedAt || record?.startedAt;
+    if (timestamp) {
+      const time = node('time', 'progress-time', date(timestamp, Boolean(release.history)));
+      time.setAttribute('datetime', timestamp);
+      time.title = date(timestamp, true);
+      control.append(time);
+    } else if (release.history && record) control.append(node('span', 'progress-time', 'Completion time not recorded'));
+    if (release.history && array(progress.deployments).length > 1) control.append(node('span', 'progress-prior', `${progress.deployments.length} deployments recorded`));
+    if (!release.history && progress.lastSuccess && distinctAttempt(progress)) control.append(node('span', 'progress-prior', 'Earlier success recorded'));
     list.append(append(node('li'), control));
   });
   return list;
@@ -536,24 +557,31 @@ function openNamespace(namespace) {
 }
 
 function openRelease(release) {
-  const content = showDetail('RELEASE CANDIDATE', release.version || 'Unknown version');
-  append(content, node('p', 'detail-summary', release.confidence === 'recorded' ? 'A release tag was identified in retained pipeline evidence.' : 'This candidate was inferred from existing ADO data. Inspect the evidence before treating it as authoritative.'), append(node('section', 'drawer-section candidate-progress-section'), node('h3', '', 'Recorded deployment progress'), releaseProgress(release), node('p', 'progress-caption', 'Select an environment to inspect the evidence. These records do not show current cluster health.')), detailFields([
+  const content = showDetail(release.history ? 'PREVIOUS RELEASE' : 'RELEASE CANDIDATE', release.version || 'Unknown version');
+  const summary = release.history ? 'This release has a successful PRD deployment in the scanned ADO history.' : release.confidence === 'recorded' ? 'A release tag was identified in retained pipeline evidence.' : 'This candidate was inferred from existing ADO data. Inspect the evidence before treating it as authoritative.';
+  append(content, node('p', 'detail-summary', summary), append(node('section', 'drawer-section candidate-progress-section'), node('h3', '', release.history ? 'Recorded deployment history' : 'Recorded deployment progress'), releaseProgress(release), node('p', 'progress-caption', release.history ? 'Dates show the latest successful deployment. Select an environment to see all its recorded successful deployments.' : 'Select an environment to inspect the evidence. These records do not show current cluster health.')), detailFields([
     ['Version', release.version], ['Release series', release.series], ['Manifest commit', release.commit || 'Not recorded', 'mono'],
-    ['Release branch', release.branch ? cleanRef(release.branch) : 'Not recorded'], ['Evidence', badge(release.confidence || 'inferred')],
-    ['Outcome', release.outcome ? badge(release.outcome) : 'Not recorded'], ['Observed', date(release.observedAt, true)], ['Pipeline run', release.runId ? `#${release.runId}` : 'Not recorded'],
-  ]), node('p', 'drawer-note', 'Observed time belongs to the pipeline evidence. It may differ from the original tag creation time. ADO history does not confirm that the Git tag still exists.'), evidenceLinks(release.evidence, release.url));
+    ...(!release.history ? [['Release branch', release.branch ? cleanRef(release.branch) : 'Not recorded'], ['Outcome', release.outcome ? badge(release.outcome) : 'Not recorded']] : []),
+    ['Evidence', badge(release.confidence || 'inferred')], [release.history ? 'Last PRD deployment' : 'Observed', date(release.observedAt, true)], [release.history ? 'PRD pipeline run' : 'Pipeline run', release.runId ? `#${release.runId}` : 'Not recorded'],
+  ]), node('p', 'drawer-note', release.history ? 'This history is reconstructed from retained deployment records. Missing records do not prove a release was never deployed, and these records do not verify the version currently running.' : 'Observed time belongs to the pipeline evidence. It may differ from the original tag creation time. ADO history does not confirm that the Git tag still exists.'), evidenceLinks(release.evidence, release.url));
 }
 
 function openReleaseProgress(release, progress) {
-  const content = showDetail('RELEASE DEPLOYMENT PROGRESS', `${release.version || 'Release'} · ${progress.environment}`);
+  const content = showDetail(release.history ? 'RELEASE DEPLOYMENT HISTORY' : 'RELEASE DEPLOYMENT PROGRESS', `${release.version || 'Release'} · ${progress.environment}`);
   append(content, button(`← Back to ${release.version || 'release'}`, 'button text progress-back', () => openRelease(release)), progressBadge(progress), node('p', 'progress-detail', progress.detail || 'No additional evidence detail is available.'), detailFields([
     ['Environment', progress.environment], ['Release version', release.version], ['Manifest commit', release.commit || 'Not recorded', 'mono'],
     ['Matched by', progress.matchedBy === 'tag-and-commit' ? 'Release tag and manifest commit' : progress.matchedBy === 'commit' ? 'Manifest commit' : 'No confirmed match'],
   ]));
-  if (progress.lastSuccess) appendProgressDeployment(content, 'Last successful deployment', progress.lastSuccess, progress.environment);
-  if (distinctAttempt(progress)) appendProgressDeployment(content, 'Latest attempt', progress.latestAttempt, progress.environment);
+  if (release.history) {
+    const deployments = array(progress.deployments).length ? progress.deployments : progress.lastSuccess ? [progress.lastSuccess] : [];
+    if (distinctAttempt(progress)) appendProgressDeployment(content, 'Latest attempt', progress.latestAttempt, progress.environment);
+    deployments.forEach((deployment, index) => appendProgressDeployment(content, index === 0 ? 'Latest successful deployment' : 'Earlier successful deployment', deployment, progress.environment));
+  } else {
+    if (progress.lastSuccess) appendProgressDeployment(content, 'Last successful deployment', progress.lastSuccess, progress.environment);
+    if (distinctAttempt(progress)) appendProgressDeployment(content, 'Latest attempt', progress.latestAttempt, progress.environment);
+  }
   if (!progress.lastSuccess && !progress.latestAttempt) content.append(node('p', 'drawer-note', 'No matching deployment record was found in the scanned history. This does not prove the release was never deployed.'));
-  append(content, evidenceLinks(progress.evidence, progress.url), node('p', 'drawer-note', 'Progress describes the available ADO evidence for this candidate. It does not verify the version currently running in the cluster.'));
+  append(content, evidenceLinks(progress.evidence, progress.url), node('p', 'drawer-note', release.history ? 'Successful deployment dates describe retained ADO records. Later failed or partial attempts may have changed the environment; this does not verify what was running between deployments.' : 'Progress describes the available ADO evidence for this candidate. It does not verify the version currently running in the cluster.'));
 }
 
 function appendProgressDeployment(container, title, deployment, environment) {

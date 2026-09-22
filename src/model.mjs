@@ -323,6 +323,56 @@ function candidateProgress(candidate, runs, allDeployments, getDetail, runsById,
   });
 }
 
+function previousReleaseHistory(runs, allDeployments, runsById, kindById) {
+  // A completed PRD deployment establishes release history independently of
+  // retained tag-creation logs or the parent run's later cancellation.
+  const identities = new Map();
+  for (const deployment of allDeployments) {
+    const run = runsById.get(deployment.runId);
+    if (deployment.environment !== 'PRD' || deployment.status !== 'succeeded'
+      || kindById.get(run?.id) !== 'release' || !run.sourceRef?.startsWith('refs/tags/')
+      || !taggedVersion(run.sourceRef) || !matchingCommit(run.commit, run.commit)) continue;
+    const commit = run.commit.toLowerCase();
+    const key = `${deployment.version}:${commit}`;
+    if (!identities.has(key)) identities.set(key, {
+      version: deployment.version, series: deployment.version.split('.').slice(0, 2).join('.'),
+      commit, history: true, confidence: 'recorded',
+    });
+  }
+  const history = [...identities.values()].map(release => {
+    const progress = CANONICAL.map(environment => {
+      const dev = environment === 'DEV';
+      const matchingIds = new Set(runs.filter(run => dev
+        ? kindById.get(run.id) === 'dev' && matchingCommit(run.commit, release.commit)
+        : matchesRelease(run, release, kindById)).map(run => run.id));
+      const attempts = allDeployments.filter(item => item.environment === environment && matchingIds.has(item.runId)
+        && (!dev || (validNamespace(item.namespace) && item.namespaceConfidence === 'recorded')));
+      const states = lastStates(attempts, runsById);
+      const deployments = attempts.filter(item => item.status === 'succeeded')
+        .sort((a, b) => time(b.finishedAt || b.startedAt) - time(a.finishedAt || a.startedAt) || b.attempt - a.attempt || b.runId - a.runId);
+      const success = states.lastSuccess;
+      const laterAttempt = states.latestAttempt && states.latestAttempt.status !== 'succeeded';
+      return {
+        environment, ...states, deployments,
+        status: success ? 'deployed' : 'not-recorded',
+        label: success ? (dev ? 'Commit deployed' : 'Deployed') : 'No record',
+        detail: success
+          ? `${dev ? 'This exact manifest commit has a recorded successful DEV deployment; this does not establish deployment of the release tag.' : 'ADO records successful deployments of this exact release tag and manifest commit.'}${laterAttempt ? ' The latest recorded attempt did not establish another successful deployment; inspect its result below.' : ''}`
+          : 'No successful matching deployment is present in the scanned history. Older deployments may no longer be retained.',
+        matchedBy: success ? (dev ? 'commit' : 'tag-and-commit') : null,
+        runId: success?.runId || null, url: success?.url || null,
+        evidence: [...new Map(deployments.flatMap(item => item.evidence).map(item => [`${item.label}:${item.url}`, item])).values()],
+      };
+    });
+    const prd = progress.find(item => item.environment === 'PRD').lastSuccess;
+    return { ...release, progress, observedAt: prd.finishedAt || null,
+      runId: prd.runId, url: prd.url, evidence: prd.evidence };
+  });
+  // Deployment order also handles an older version being redeployed later.
+  // Missing completion times remain explicit instead of using the run finish.
+  return history.sort((a, b) => time(b.observedAt) - time(a.observedAt) || b.runId - a.runId);
+}
+
 export function buildDashboard({ builds = [], details = new Map(), environments = [], environmentRecords = [], organization = '', project = '', fetchedAt = new Date().toISOString(), limits = {}, warnings = [], qaAvailability = new Map(), devUrls = null } = {}) {
   const runs = builds.map(build => normalizeRun(build, organization, project)).sort((a, b) => time(b.queuedAt) - time(a.queuedAt));
   const runsById = new Map(runs.map(run => [run.id, run]));
@@ -408,6 +458,7 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
     return !releaseRuns.length || releaseRuns.some(run => !isAbandonedRun(run));
   }).sort(versionDescending);
   for (const release of releases) release.progress = candidateProgress(release, runs, allDeployments, getDetail, runsById, kindById);
+  const previousReleases = previousReleaseHistory(runs, allDeployments, runsById, kindById);
   const envRows = CANONICAL.map(name => ({ name, namespace: name.toLowerCase(), ...lastStates(allDeployments.filter(item => item.environment === name && item.namespace === name.toLowerCase()), runsById) }));
   const canonicalAccess = devUrls ? { source: 'configured', links: [
     { kind: 'b2c-base', label: 'B2C', url: devUrls.b2c },
@@ -421,7 +472,8 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
   if (missingTimelines) warningRows.push({ code: 'TIMELINE_COVERAGE', message: `${missingTimelines} run(s) have no loaded timeline; deployment and release evidence may be incomplete.` });
   if (inferredNamespaces) warningRows.push({ code: 'INFERRED_DEV_NAMESPACE', message: `${inferredNamespaces} DEV namespace mapping(s) are inferred from branch naming because a successful resolver log was unavailable.` });
   if (limits.truncated || limits.buildsTruncated || limits.logsTruncated) warningRows.push({ code: 'BOUNDED_HISTORY', message: 'The loaded history is bounded; an older successful deployment or release may be outside this snapshot.' });
-  if (releases.some((release, index) => releases.slice(index + 1).some(other => release.version === other.version && release.commit !== other.commit))) warningRows.push({ code: 'RELEASE_TAG_CONFLICT', message: 'A release version was observed at different commits. Both records are shown; the current Git tag cannot be verified through historical ADO logs alone.' });
+  const releaseIdentities = [...releases, ...previousReleases];
+  if (releaseIdentities.some((release, index) => releaseIdentities.slice(index + 1).some(other => release.version === other.version && release.commit.toLowerCase() !== other.commit.toLowerCase()))) warningRows.push({ code: 'RELEASE_TAG_CONFLICT', message: 'A release version was observed at different commits. Both records are shown; the current Git tag cannot be verified through historical ADO logs alone.' });
 
   return {
     readOnly: true, mode: 'live', organization, project, fetchedAt, limits, warnings: warningRows,
@@ -433,6 +485,6 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
       { label: 'Runtime health', status: 'unavailable', detail: 'This read-only ADO prototype does not query Kubernetes or establish what is currently running.' },
       { label: 'QA revision assurance', status: 'unavailable', detail: 'A queued or passing QA run alone does not prove it tested the exact deployed manifest commit.' },
     ],
-    environments: envRows, namespaces, releases, runs,
+    environments: envRows, namespaces, releases, previousReleases, runs,
   };
 }
