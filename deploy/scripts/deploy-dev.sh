@@ -10,6 +10,16 @@ for name in AKS_NAME AKS_RESOURCE_GROUP ACR_NAME NAMESPACE IDENTITY_RESOURCE_ID 
     exit 1
   fi
 done
+# Optional evidence pipeline IDs make deployment independent of ADO display names.
+# ADO leaves an undefined explicit env macro intact; only that exact macro is absent.
+for name in ADO_QA_DEV_PIPELINE_ID ADO_QA_TST_PIPELINE_ID ADO_SCAN_PIPELINE_ID; do
+  value="${!name:-}"
+  # shellcheck disable=SC2016
+  if [[ "$value" == '$('"${name}"')' ]]; then
+    value=''
+  fi
+  printf -v "$name" '%s' "$value"
+done
 # Optional canonical DEV application links belong in the private variable group.
 # An absent ADO variable arrives as its literal macro; treat only that exact macro as empty.
 for name in DEV_B2C_URL DEV_B2B_URL; do
@@ -31,7 +41,9 @@ for name in DEV_B2C_URL DEV_B2B_URL; do
     exit 1
   fi
 done
-for name in ADO_DEV_PIPELINE_ID ADO_CREATE_RELEASE_PIPELINE_ID ADO_RELEASE_PIPELINE_ID ADO_QA_PIPELINE_ID; do
+for name in ADO_DEV_PIPELINE_ID ADO_CREATE_RELEASE_PIPELINE_ID ADO_RELEASE_PIPELINE_ID ADO_QA_PIPELINE_ID \
+  ADO_QA_DEV_PIPELINE_ID ADO_QA_TST_PIPELINE_ID ADO_SCAN_PIPELINE_ID; do
+  [[ -n "${!name}" ]] || continue
   if [[ ! "${!name}" =~ ^[1-9][0-9]{0,8}$ ]] || (( ${!name} > 100000000 )); then
     echo "${name} must be a positive pipeline ID no greater than 100000000." >&2
     exit 1
@@ -132,10 +144,12 @@ jq -n --arg repository "$repository" --arg digest "$digest" \
   --arg devB2cUrl "$DEV_B2C_URL" --arg devB2bUrl "$DEV_B2B_URL" \
   --argjson dev "$ADO_DEV_PIPELINE_ID" --argjson createRelease "$ADO_CREATE_RELEASE_PIPELINE_ID" \
   --argjson release "$ADO_RELEASE_PIPELINE_ID" --argjson qa "$ADO_QA_PIPELINE_ID" \
+  --argjson qaDev "${ADO_QA_DEV_PIPELINE_ID:-null}" --argjson qaTst "${ADO_QA_TST_PIPELINE_ID:-null}" \
+  --argjson scan "${ADO_SCAN_PIPELINE_ID:-null}" \
   '{image:{repository:$repository,digest:$digest}, workloadIdentity:{clientId:$clientId,tenantId:$tenantId},
     ingress:{host:$ingressHost},
     devUrls:{b2c:$devB2cUrl,b2b:$devB2bUrl},
-    ado:{organization:$organization,project:$project,pipelines:{dev:$dev,createRelease:$createRelease,release:$release,qa:$qa}}}' \
+    ado:{organization:$organization,project:$project,pipelines:{dev:$dev,createRelease:$createRelease,release:$release,qa:$qa,qaDev:$qaDev,qaTst:$qaTst,scan:$scan}}}' \
   > "$DEPLOY_TEMP_DIR/runtime-values.json"
 chmod 600 "$DEPLOY_TEMP_DIR/runtime-values.json"
 helm upgrade --install ipaffs-release-explorer "${charts[0]}" \
@@ -165,7 +179,8 @@ kubectl --namespace "$NAMESPACE" exec deployment/ipaffs-release-explorer -- node
     process.exit(1);
   }
   const pipelines = dashboard.limits?.pipelines || [];
-  if (!["dev", "create", "release", "qa"].every(kind => pipelines.some(p => p.kind === kind && p.count > 0))) {
+  // The legacy QA pipeline may have no retained runs after retirement.
+  if (!["dev", "create", "release"].every(kind => pipelines.some(p => p.kind === kind && p.count > 0))) {
     console.error("ADO read smoke check failed: expected pipeline history is missing. Check pipeline visibility for the managed identity.");
     process.exit(1);
   }
