@@ -22,6 +22,9 @@ ado:
     createRelease: ""
     release: ""
     qa: ""
+    # Optional IDs; exact-name discovery is used when omitted.
+    qaDev: null
+    qaTst: null
   runsPerPipeline: 100
   cacheSeconds: 90
 

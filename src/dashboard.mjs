@@ -1,6 +1,7 @@
 import { buildDashboard, successfulQaLinks } from './model.mjs';
 import { mapConcurrent } from './ado-client.mjs';
 import { normalizeRetentionPolicy, inferQaRetention } from './retention.mjs';
+import { normalizeTestSummary } from './qa-summary.mjs';
 
 const INTERESTING_LOG = /Resolve namespace|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline|Publish namespace access URLs|Generate namespace URLs/i;
 
@@ -13,12 +14,41 @@ export function createDashboardService(config, client, { now = Date.now } = {}) 
   async function load() {
     const warnings = [];
     const callsBefore = client.requests;
-    const lists = await Promise.all(Object.entries(config.pipelines).map(async ([kind, id]) => ({
-      kind,
-      ...(await client.list('build/builds', { definitions: id, queryOrder: 'queueTimeDescending' }, config.runsPerPipeline)),
-    })));
+    const qaPipelines = await Promise.all(Object.entries(config.qaPipelines || {}).map(async ([kind, pipeline]) => {
+      try {
+        if (pipeline.id) return [kind, pipeline.id];
+        const result = await client.list('build/definitions', { name: pipeline.name, path: pipeline.path, type: 'build' }, 100);
+        const matches = result.items.filter(item => item.name === pipeline.name && item.path === pipeline.path
+          && Number.isSafeInteger(item.id) && item.id > 0);
+        if (result.limited || matches.length !== 1) throw new Error('QA pipeline was not uniquely identified');
+        return [kind, matches[0].id];
+      } catch {
+        warnings.push({ code: 'qa_pipeline_unavailable', message: `${pipeline.name} could not be identified; its test evidence is unavailable in this scan.` });
+        return null;
+      }
+    }));
+    const extraPipelines = qaPipelines.filter(Boolean).filter(([, id], index, entries) => {
+      if (Object.values(config.pipelines).includes(id) || entries.some((entry, other) => other !== index && entry[1] === id)) {
+        warnings.push({ code: 'qa_pipeline_conflict', message: 'QA pipeline configuration overlaps another pipeline; ambiguous test evidence has been excluded.' });
+        return false;
+      }
+      return true;
+    });
+    const pipelineEntries = [...Object.entries(config.pipelines), ...extraPipelines];
+    const lists = await Promise.all(pipelineEntries.map(async ([kind, id]) => {
+      try {
+        return {
+          kind,
+          ...(await client.list('build/builds', { definitions: id, queryOrder: 'queueTimeDescending' }, config.runsPerPipeline)),
+        };
+      } catch (error) {
+        if (!['qaDev', 'qaTst'].includes(kind)) throw error;
+        warnings.push({ code: 'qa_history_unavailable', message: `${kind === 'qaDev' ? 'DEV' : 'TST'} QA history is unavailable; no test outcome has been inferred.` });
+        return { kind, items: [], limited: false };
+      }
+    }));
     const builds = lists.flatMap(list => list.items.map(build => ({ ...build, _kind: list.kind })));
-    const relevant = builds.filter(build => build.definition.id !== config.pipelines.qa);
+    const relevant = builds.filter(build => !['qa', 'qaDev', 'qaTst'].includes(build._kind));
     const details = new Map();
     await mapConcurrent(relevant, 6, async build => {
       try {
@@ -121,7 +151,25 @@ export function createDashboardService(config, client, { now = Date.now } = {}) 
       pipelines: lists.map(list => ({ kind: list.kind, count: list.items.length, limited: list.limited })),
       apiRequests: client.requests - callsBefore,
     };
-    const dashboard = buildDashboard({ builds, details, environments, environmentRecords, organization: config.organization, project: config.project, fetchedAt, limits, warnings, qaAvailability, devUrls: config.devUrls });
+    const dashboardInput = { builds, details, environments, environmentRecords, organization: config.organization, project: config.project, fetchedAt, limits, warnings, qaAvailability, devUrls: config.devUrls };
+    // Resolve provenance first. Unrelated nightly/manual runs do not need a
+    // result lookup and must not be displayed against a deployment/version.
+    const provisional = buildDashboard(dashboardInput);
+    const qaSummaries = new Map();
+    const linkedIds = new Set(provisional.runs.flatMap(run => run.qaLinks.map(link => Number(link.id)))
+      .filter(id => builds.some(build => Number(build.id) === id && ['qa', 'qaDev', 'qaTst'].includes(build._kind))));
+    await mapConcurrent([...linkedIds], 4, async id => {
+      try {
+        const { data } = await client.get('test/ResultSummaryByBuild', { buildId: id, 'api-version': '7.1-preview.1' });
+        qaSummaries.set(id, normalizeTestSummary(data));
+      } catch {
+        // Keep failures local to the linked test result. A missing permission,
+        // expired result or transient API failure must never become 0% or 100%.
+        qaSummaries.set(id, { availability: 'unavailable' });
+      }
+    });
+    limits.apiRequests = client.requests - callsBefore;
+    const dashboard = buildDashboard({ ...dashboardInput, qaSummaries });
     lastDetails = details;
     lastBuilds = builds;
     cached = dashboard;

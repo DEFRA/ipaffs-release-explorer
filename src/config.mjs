@@ -53,6 +53,12 @@ export function loadConfig(env = process.env) {
       release: integer('ADO_RELEASE_PIPELINE_ID'),
       qa: integer('ADO_QA_PIPELINE_ID'),
     },
+    // Discover the fixed-environment QA pipelines by exact name unless an ID
+    // override is supplied. Existing deployments need no new library variables.
+    qaPipelines: {
+      qaDev: { id: env.ADO_QA_DEV_PIPELINE_ID ? integer('ADO_QA_DEV_PIPELINE_ID') : null, name: 'Test DEV', path: '\\QA' },
+      qaTst: { id: env.ADO_QA_TST_PIPELINE_ID ? integer('ADO_QA_TST_PIPELINE_ID') : null, name: 'Test TST', path: '\\QA' },
+    },
     environmentNames: ['DEV', 'TST', 'PRE', 'PRD'],
     devUrls: canonicalDevUrls(env),
     runsPerPipeline: integer('ADO_RUNS_PER_PIPELINE', 100, 1, 100),
