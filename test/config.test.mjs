@@ -8,7 +8,7 @@ const environment = {
 };
 
 test('vulnerability scan discovery works without deployment configuration changes', () => {
-  assert.deepEqual(loadConfig(environment).scanPipeline, { id: null, name: 'Container Vulnerability Scanning', path: '\\' });
+  assert.deepEqual(loadConfig(environment).scanPipeline, { id: null, name: 'Container Vulnerability Scanning' });
   assert.equal(loadConfig({ ...environment, ADO_SCAN_PIPELINE_ID: '107' }).scanPipeline.id, 107);
   assert.throws(() => loadConfig({ ...environment, ADO_SCAN_PIPELINE_ID: 'invalid' }), /ADO_SCAN_PIPELINE_ID/);
 });
