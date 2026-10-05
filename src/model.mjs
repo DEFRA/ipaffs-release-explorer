@@ -45,6 +45,11 @@ function normalizeRun(build, organization, project) {
 function evidence(label, url, type = 'timeline') { return { label, url, type }; }
 function recordUrl(run, record) { return `${run.url}&view=logs${record?.id ? `&j=${encodeURIComponent(record.id)}` : ''}`; }
 function logUrl(run, log) { return `${run.url}&view=logs${log?.id ? `&l=${encodeURIComponent(log.id)}` : ''}`; }
+function testResultsUrl(url) {
+  const result = new URL(url);
+  result.searchParams.set('view', 'ms.vss-test-web.build-test-results-tab');
+  return result.href;
+}
 
 // Only post-push messages emitted by the existing release script are evidence.
 // Parameter echoes and "Next patch release" messages do not establish a tag.
@@ -373,7 +378,91 @@ function previousReleaseHistory(runs, allDeployments, runsById, kindById) {
   return history.sort((a, b) => time(b.observedAt) - time(a.observedAt) || b.runId - a.runId);
 }
 
-export function buildDashboard({ builds = [], details = new Map(), environments = [], environmentRecords = [], organization = '', project = '', fetchedAt = new Date().toISOString(), limits = {}, warnings = [], qaAvailability = new Map(), devUrls = null } = {}) {
+// A parent run can contain several attempts. Associate evidence with the attempt
+// that preceded the queue action, never with a later retry of that same run.
+function deploymentBeforeQa(deployments, runId, environment, queuedAt) {
+  const queuedTime = time(queuedAt);
+  if (!queuedTime) return null;
+  const preceding = deployments.filter(item => item.runId === runId && item.environment === environment
+    && time(item.startedAt || item.finishedAt) && time(item.startedAt || item.finishedAt) <= queuedTime)
+    .sort((a, b) => time(b.startedAt || b.finishedAt) - time(a.startedAt || a.finishedAt) || b.attempt - a.attempt);
+  const deployment = preceding[0];
+  if (deployment?.status !== 'succeeded' || !time(deployment.finishedAt) || time(deployment.finishedAt) > queuedTime) return null;
+  if (environment === 'DEV' && deployment.namespace !== 'dev') return null;
+  return deployment;
+}
+
+function attachQaEvidence({ builds, runsById, kindById, deployments, getDetail, qaSummaries }) {
+  const rawById = new Map(builds.map(build => [Number(build.id), build]));
+  const summaryFor = id => qaSummaries.get(id) || qaSummaries.get(String(id)) || null;
+  const attach = (deployment, link) => {
+    link.environment = deployment.environment;
+    link.resultsUrl = testResultsUrl(link.url);
+    link.summary = summaryFor(link.id);
+    if (!deployment.qa.runs.some(item => item.id === link.id)) deployment.qa.runs.push(link);
+  };
+  for (const deployment of deployments) deployment.qa = { state: 'not-linked', latest: null, runs: [] };
+
+  for (const build of builds) {
+    const environment = build._kind === 'qaDev' ? 'DEV' : build._kind === 'qaTst' ? 'TST' : null;
+    const trigger = build.triggerInfo;
+    if (!environment || String(build.reason).toLowerCase() !== 'resourcetrigger'
+      || trigger?.alias !== 'deployment' || trigger?.pipelineTriggerType !== 'PipelineCompletion'
+      || trigger?.artifactType !== 'Pipeline') continue;
+    const parentId = Number(trigger.pipelineId);
+    if (!Number.isSafeInteger(parentId) || parentId <= 0
+      || kindById.get(parentId) !== (environment === 'DEV' ? 'dev' : 'release')) continue;
+    const parent = runsById.get(parentId), child = runsById.get(Number(build.id));
+    if (trigger.branch && trigger.branch !== parent.sourceRef) continue;
+    const deployment = deploymentBeforeQa(deployments, parentId, environment, child.queuedAt);
+    if (!deployment) continue;
+    const marker = (getDetail(parentId)?.timeline?.records || []).filter(record => record.type === 'Stage'
+      && record.identifier === `QA_${environment}_Ready` && isSuccess(record)
+      && time(record.finishTime) >= time(deployment.finishedAt)
+      && time(record.finishTime) <= time(child.queuedAt))
+      .sort((a, b) => time(b.finishTime) - time(a.finishTime) || attempt(b) - attempt(a))[0];
+    if (!marker) continue;
+    const link = { id: child.id, pipelineId: child.pipelineId, status: child.status, result: child.result,
+      abandonment: child.abandonment,
+      queuedAt: child.queuedAt, finishedAt: child.finishedAt, url: child.url,
+      revisionVerified: false, evidence: [evidence('ADO deployment completion trigger', child.url, 'run'),
+        evidence(`Successful ${environment} QA readiness stage`, recordUrl(parent, marker))] };
+    attach(deployment, link);
+    if (!parent.qaLinks.some(item => item.id === child.id)) parent.qaLinks.push(link);
+  }
+
+  // Older release pipelines queued QA explicitly. Only known environment
+  // evidence may place those links on cards; generic legacy links remain in the
+  // run detail even when their environment cannot be established.
+  for (const parent of runsById.values()) {
+    const kind = kindById.get(parent.id);
+    if (!['dev', 'release'].includes(kind)) continue;
+    const detail = getDetail(parent.id), records = detail?.timeline?.records || [];
+    for (const { link: queued, log } of successfulQaLinks(detail)) {
+      const link = parent.qaLinks.find(item => item.id === queued.id);
+      const child = rawById.get(queued.id);
+      if (!link || (child && (child._kind !== 'qa' || Number(child.definition?.id) !== queued.pipelineId))) continue;
+      const task = findLogRecord(log, records);
+      const declared = child?.templateParameters?.environmentName;
+      let environment;
+      if (kind === 'dev' && declared === 'DEV') environment = 'DEV';
+      if (kind === 'release' && (!declared || declared === 'TST') && records.some(record => record.type === 'Stage'
+        && record.identifier === 'TriggerQAAutomation' && descendantOf(task, record, records))) environment = 'TST';
+      if (!environment) continue;
+      const queuedAt = link.queuedAt || task?.startTime || task?.finishTime;
+      if (link.queuedAt && time(task?.startTime) > time(link.queuedAt)) continue;
+      const deployment = deploymentBeforeQa(deployments, parent.id, environment, queuedAt);
+      if (deployment) attach(deployment, link);
+    }
+  }
+  for (const deployment of deployments) {
+    deployment.qa.runs.sort((a, b) => time(b.queuedAt) - time(a.queuedAt) || b.id - a.id);
+    deployment.qa.latest = deployment.qa.runs[0] || null;
+    deployment.qa.state = deployment.qa.latest ? 'linked' : 'not-linked';
+  }
+}
+
+export function buildDashboard({ builds = [], details = new Map(), environments = [], environmentRecords = [], organization = '', project = '', fetchedAt = new Date().toISOString(), limits = {}, warnings = [], qaAvailability = new Map(), qaSummaries = new Map(), devUrls = null } = {}) {
   const runs = builds.map(build => normalizeRun(build, organization, project)).sort((a, b) => time(b.queuedAt) - time(a.queuedAt));
   const runsById = new Map(runs.map(run => [run.id, run]));
   const kindById = new Map(builds.map(build => [Number(build.id), build._kind]));
@@ -415,8 +504,11 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
       const childRun = runsById.get(child.id);
       run.qaLinks.push({ ...child, status: childRun?.status || 'unknown', result: childRun?.result || null,
         abandonment: childRun?.abandonment || null,
+        queuedAt: childRun?.queuedAt || child.queuedAt || null, finishedAt: childRun?.finishedAt || child.finishedAt || null,
         ...(!childRun && qaAvailability.has(child.id) ? { availability: qaAvailability.get(child.id) } : {}),
         url: childRun?.url || runUrl({ id: child.id }, organization, project), revisionVerified: false,
+        resultsUrl: testResultsUrl(childRun?.url || runUrl({ id: child.id }, organization, project)),
+        summary: qaSummaries.get(child.id) || qaSummaries.get(String(child.id)) || null,
         evidence: [evidence('QA run ID from successful queue task', logUrl(run, log), 'log')] });
     }
     if (!['dev', 'release'].includes(kind)) continue;
@@ -442,6 +534,8 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
       }
     }
   }
+
+  attachQaEvidence({ builds, runsById, kindById, deployments: allDeployments, getDetail, qaSummaries });
 
   const releasesByIdentity = new Map();
   // Prefer actual creation evidence over later verified no-ops for the same tag+SHA.

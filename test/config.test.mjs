@@ -7,6 +7,17 @@ const environment = {
   ADO_RELEASE_PIPELINE_ID: '103', ADO_QA_PIPELINE_ID: '104',
 };
 
+test('fixed QA pipeline IDs are optional overrides of exact-name discovery', () => {
+  assert.deepEqual(loadConfig(environment).qaPipelines, {
+    qaDev: { id: null, name: 'Test DEV', path: '\\QA' },
+    qaTst: { id: null, name: 'Test TST', path: '\\QA' },
+  });
+  assert.equal(loadConfig({ ...environment, ADO_QA_DEV_PIPELINE_ID: '105' }).qaPipelines.qaDev.id, 105);
+  for (const name of ['ADO_QA_DEV_PIPELINE_ID', 'ADO_QA_TST_PIPELINE_ID']) {
+    assert.throws(() => loadConfig({ ...environment, [name]: 'not-an-id' }), new RegExp(name));
+  }
+});
+
 test('Host allowlist defaults to the local port and accepts explicit cluster addresses', () => {
   assert.deepEqual(loadConfig({ ...environment, PORT: '4400' }).allowedHosts, ['localhost:4400', '127.0.0.1:4400']);
   assert.deepEqual(loadConfig({ ...environment, ALLOWED_HOSTS: 'localhost:4317, Explorer.tools.svc:4317,explorer.internal' }).allowedHosts,

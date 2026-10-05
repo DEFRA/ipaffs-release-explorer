@@ -6,14 +6,25 @@ export function sampleDashboard() {
   const at = hours => new Date(now.getTime() - hours * 3600000).toISOString();
   const url = id => `${organization}/${project}/_build/results?buildId=${id}`;
   const evidence = id => [{ label: 'Sample pipeline timeline', url: url(id), type: 'sample' }];
+  const qaRun = (id, environment, result, hours, counts = null) => ({
+    id, environment, pipelineId: environment === 'DEV' ? 201 : 202,
+    status: result ? 'completed' : 'inProgress', result,
+    queuedAt: at(hours + 0.5), finishedAt: result ? at(hours) : null,
+    url: url(id), resultsUrl: `${url(id)}&view=ms.vss-test-web.build-test-results-tab`,
+    summary: counts ? { availability: 'available', ...counts, total: counts.passed + counts.failed + counts.skipped + counts.other,
+      executed: counts.passed + counts.failed + counts.other, passPercentage: 100 * counts.passed / (counts.passed + counts.failed + counts.other) } : null,
+  });
+  const linkedQa = (...runs) => ({ state: 'linked', latest: runs[0], runs });
   const deploy = (id, environment, version, status, hours, namespace = environment.toLowerCase()) => ({
     runId: id, environment, namespace, version, status, commit: 'a'.repeat(40), attempt: 1,
     startedAt: status === 'pending' ? null : at(hours + 0.2), finishedAt: status === 'succeeded' ? at(hours) : null,
-    url: url(id), evidence: evidence(id),
+    url: url(id), evidence: evidence(id), qa: { state: 'not-linked', latest: null, runs: [] },
   });
   const tst = deploy(100, 'TST', '4.2.0', 'succeeded', 24);
   const pre = deploy(100, 'PRE', '4.2.0', 'succeeded', 12);
   const dev = deploy(101, 'DEV', 'master', 'succeeded', 1);
+  dev.qa = linkedQa(qaRun(301, 'DEV', 'succeeded', 0.3, { passed: 374, failed: 0, skipped: 18, other: 0 }));
+  tst.qa = linkedQa(qaRun(302, 'TST', 'failed', 23, { passed: 372, failed: 4, skipped: 16, other: 0 }));
   dev.trigger = { reason: 'batchedCI', requestedBy: 'Example build service', requestedFor: 'Example build service' };
   const previousPrd = { ...deploy(99, 'PRD', '4.1.3', 'succeeded', 120), commit: 'b'.repeat(40), versionKind: 'release-tag', sourceRef: 'refs/tags/4.1.3' };
   const dashboard = {
@@ -104,5 +115,10 @@ export function sampleDashboard() {
   ].map(({ outcome, ...release }) => release);
   dashboard.limits.runCount = dashboard.runs.length;
   dashboard.limits.retrievedRuns = dashboard.runs.length;
+  const previousTst = dashboard.previousReleases[0].progress.find(item => item.environment === 'TST').lastSuccess;
+  previousTst.qa = linkedQa(
+    qaRun(303, 'TST', null, 0.1),
+    qaRun(304, 'TST', 'succeeded', 129, { passed: 376, failed: 0, skipped: 16, other: 0 }),
+  );
   return dashboard;
 }

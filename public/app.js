@@ -289,6 +289,61 @@ function scanDescription(limits, count) {
   return `${parts.length ? parts.join(' · ') : `${count} runs scanned`} · Not a full history`;
 }
 
+function qaPresentation(qa) {
+  if (!qa) return { label: 'No linked tests', tone: 'neutral', detail: 'No test run linked to this deployment.' };
+  const status = normalizedStatus(recordStatus(qa));
+  const running = ['inprogress', 'running'].includes(status);
+  const waiting = ['queued', 'notstarted', 'pending'].includes(status);
+  if (running || waiting) return { label: running ? 'Tests running' : 'Tests queued', tone: 'info', detail: 'Results will appear after the test run finishes.' };
+  const summary = qa.summary;
+  const available = summary?.availability === 'available';
+  const failed = status === 'failed' || (available && summary.failed > 0);
+  const warning = ['partiallysucceeded', 'succeededwithissues'].includes(status) || (available && summary.other > 0);
+  const passed = ['succeeded', 'success'].includes(status) && available && summary.executed > 0 && summary.passed === summary.executed && !summary.other;
+  const tone = failed ? 'danger' : warning ? 'warning' : passed ? 'success' : 'neutral';
+  if (!available) return { label: qa.availability?.label || 'Results unavailable', tone, detail: qa.availability?.detail || 'No published test results are available for this run.' };
+  const percentage = Number.isFinite(summary.passPercentage) ? summary.passPercentage : null;
+  // Avoid rounding a non-perfect result to 100%.
+  const formatted = percentage === null ? null : new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 }).format(percentage < 100 ? Math.min(99.9, percentage) : percentage);
+  const counts = `${summary.passed} passed · ${summary.failed} failed · ${summary.skipped} skipped${summary.other ? ` · ${summary.other} other` : ''}`;
+  return { label: summary.executed > 0 && formatted !== null ? `${formatted}% passed` : 'No tests executed', tone, detail: counts,
+    denominator: `${summary.passed} passed out of ${summary.executed} executed tests. ${summary.skipped} skipped tests excluded from the pass percentage.` };
+}
+
+function qaSummary(deployment, { compact = false, run = deployment?.qa?.latest } = {}) {
+  const presentation = qaPresentation(run);
+  const section = node('section', `qa-summary${compact ? ' qa-summary-compact' : ''}`);
+  section.setAttribute('aria-label', `Test results for ${deployment?.environment || 'this environment'} ${deployment?.version || ''}`.trim());
+  const heading = append(node('div', 'qa-heading'), node('span', 'qa-label', 'Tests'));
+  if (run) heading.append(badge(recordStatus(run), presentation.tone));
+  const metric = node('p', `qa-metric qa-${presentation.tone}`, presentation.label);
+  if (presentation.denominator) metric.title = presentation.denominator;
+  append(section, heading, metric, node('p', 'qa-counts', presentation.detail));
+  if (run) {
+    const hasResults = run.summary?.availability === 'available';
+    const link = externalLink(hasResults ? 'View test results ↗' : `View test run #${run.id} ↗`, hasResults ? run.resultsUrl || run.url : run.url, 'qa-results-link');
+    link.setAttribute('aria-label', `${hasResults ? 'View test results' : 'View test run'} for ${deployment?.environment || run.environment || 'environment'} ${deployment?.version || ''}, QA run ${run.id} (opens in a new tab)`);
+    section.append(link);
+    if (!compact) {
+      append(section, node('p', 'qa-run-meta', `QA run #${run.id} · ${date(run.finishedAt || run.queuedAt, true)}`));
+      if (presentation.denominator) section.append(node('p', 'qa-run-meta', presentation.denominator));
+    }
+  }
+  return section;
+}
+
+function deploymentQaDetails(deployment) {
+  const section = append(node('section', 'drawer-section deployment-qa'), node('h3', '', 'Tests linked to this deployment'), qaSummary(deployment));
+  const runs = array(deployment?.qa?.runs).filter(run => run.id !== deployment?.qa?.latest?.id);
+  if (runs.length) {
+    const history = append(node('details', 'qa-history'), node('summary', '', `${runs.length} earlier linked test ${runs.length === 1 ? 'run' : 'runs'}`));
+    runs.forEach(run => history.append(qaSummary(deployment, { run })));
+    section.append(history);
+  }
+  if (deployment?.qa?.latest) section.append(node('p', 'qa-run-meta', 'Linked by deployment evidence. A later deployment may have changed the environment while tests were running.'));
+  return section;
+}
+
 function renderEnvironments() {
   const container = $('environment-grid');
   container.replaceChildren();
@@ -302,7 +357,7 @@ function renderEnvironments() {
     } else {
       append(main, node('p', 'version-empty', 'No deployment found'), node('p', 'card-commit', 'Within scanned history'), badge('unknown'), node('p', 'deployment-time', 'No successful ADO record'));
     }
-    card.append(main);
+    append(card, main, qaSummary(deployment, { compact: true }));
     const footer = node('div', 'card-footer');
     const latest = environment.latestAttempt;
     if (latest && (!deployment || latest.runId !== deployment.runId || latest.attempt !== deployment.attempt || normalizedStatus(recordStatus(latest)) !== 'succeeded')) {
@@ -452,6 +507,11 @@ function releaseProgress(release) {
     } else if (release.history && record) control.append(node('span', 'progress-time', 'Completion time not recorded'));
     if (release.history && array(progress.deployments).length > 1) control.append(node('span', 'progress-prior', `${progress.deployments.length} deployments recorded`));
     if (!release.history && progress.lastSuccess && distinctAttempt(progress)) control.append(node('span', 'progress-prior', 'Earlier success recorded'));
+    const qa = record?.qa?.latest;
+    if (qa) {
+      const presentation = qaPresentation(qa);
+      control.append(node('span', `progress-qa qa-${presentation.tone}`, `Tests: ${presentation.label}`));
+    }
     list.append(append(node('li'), control));
   });
   return list;
@@ -515,8 +575,8 @@ function openDeployment(deployment, name) {
     ['Status', badge(recordStatus(deployment))], ['Pipeline run', `#${deployment.runId}`], ['Stage attempt', deployment.attempt],
     ...runTriggerFields(deployment),
     ['Started', date(deployment.startedAt, true)], ['Finished', deployment.finishedAt ? date(deployment.finishedAt, true) : 'Not finished / not recorded'],
-  ]), retryRequesterNote(deployment), evidenceLinks(deployment.evidence, deployment.url));
-  loadStages(deployment.runId, content);
+  ]), retryRequesterNote(deployment), deploymentQaDetails(deployment), evidenceLinks(deployment.evidence, deployment.url));
+  loadStages(deployment.runId, content, false);
 }
 
 function openNamespace(namespace) {
@@ -592,7 +652,7 @@ function appendProgressDeployment(container, title, deployment, environment) {
     ...runTriggerFields(deployment),
     ['Started', deployment.startedAt ? date(deployment.startedAt, true) : 'Not started / not recorded'],
     ['Finished', deployment.finishedAt ? date(deployment.finishedAt, true) : 'Not finished / not recorded'],
-  ]), retryRequesterNote(deployment), button('Inspect deployment record', 'button secondary', () => openDeployment(deployment, environment)));
+  ]), retryRequesterNote(deployment), qaSummary(deployment), button('Inspect deployment record', 'button secondary', () => openDeployment(deployment, environment)));
   container.append(section);
 }
 
@@ -633,7 +693,7 @@ function renderStages(stages, container) {
   container.append(section);
 }
 
-async function loadStages(runId, container) {
+async function loadStages(runId, container, includeQaLinks = true) {
   if (!/^\d+$/.test(String(runId || ''))) return;
   const request = state.detailRequest;
   const loading = node('p', 'detail-loading', 'Reading stage history…');
@@ -643,7 +703,7 @@ async function loadStages(runId, container) {
     if (request !== state.detailRequest) return;
     loading.remove();
     renderStages(array(result.stages), container);
-    if (array(result.run?.qaLinks).length) renderQaLinks(result.run.qaLinks, container);
+    if (includeQaLinks && array(result.run?.qaLinks).length) renderQaLinks(result.run.qaLinks, container);
     if (array(result.evidence).length) container.append(evidenceLinks(result.evidence));
   } catch {
     if (request !== state.detailRequest) return;

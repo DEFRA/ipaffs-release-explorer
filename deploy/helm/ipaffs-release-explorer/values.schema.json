@@ -42,7 +42,9 @@
             "dev": {"type": "integer", "minimum": 1},
             "createRelease": {"type": "integer", "minimum": 1},
             "release": {"type": "integer", "minimum": 1},
-            "qa": {"type": "integer", "minimum": 1}
+            "qa": {"type": "integer", "minimum": 1},
+            "qaDev": {"type": ["integer", "null"], "minimum": 1},
+            "qaTst": {"type": ["integer", "null"], "minimum": 1}
           },
           "additionalProperties": false
         },

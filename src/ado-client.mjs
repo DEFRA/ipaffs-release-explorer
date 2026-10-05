@@ -118,7 +118,7 @@ export class AdoClient {
 
   async get(path, query = {}, { text = false } = {}) {
     // This is deliberately not an arbitrary URL proxy. All network operations are GET.
-    if (!/^(?:build|distributedtask)\/[A-Za-z0-9/_-]+$/.test(path)) throw new Error('Unsupported ADO API path');
+    if (!/^(?:build|distributedtask)\/[A-Za-z0-9/_-]+$/.test(path) && path !== 'test/ResultSummaryByBuild') throw new Error('Unsupported ADO API path');
     const url = new URL(path, this.base);
     url.searchParams.set('api-version', /^build\/builds(?:\/\d+)?$/.test(path) ? BUILD_SUMMARY_API_VERSION : '7.1');
     for (const [key, value] of Object.entries(query)) if (value !== undefined) url.searchParams.set(key, String(value));

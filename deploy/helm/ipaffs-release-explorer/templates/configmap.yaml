@@ -21,6 +21,12 @@ data:
   ADO_CREATE_RELEASE_PIPELINE_ID: {{ .Values.ado.pipelines.createRelease | quote }}
   ADO_RELEASE_PIPELINE_ID: {{ .Values.ado.pipelines.release | quote }}
   ADO_QA_PIPELINE_ID: {{ .Values.ado.pipelines.qa | quote }}
+  {{- if .Values.ado.pipelines.qaDev }}
+  ADO_QA_DEV_PIPELINE_ID: {{ .Values.ado.pipelines.qaDev | quote }}
+  {{- end }}
+  {{- if .Values.ado.pipelines.qaTst }}
+  ADO_QA_TST_PIPELINE_ID: {{ .Values.ado.pipelines.qaTst | quote }}
+  {{- end }}
   ADO_RUNS_PER_PIPELINE: {{ .Values.ado.runsPerPipeline | quote }}
   ADO_CACHE_SECONDS: {{ .Values.ado.cacheSeconds | quote }}
   DEV_B2C_URL: {{ .Values.devUrls.b2c | quote }}
