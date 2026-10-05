@@ -344,6 +344,67 @@ function deploymentQaDetails(deployment) {
   return section;
 }
 
+function vulnerabilityPresentation(scan) {
+  const states = {
+    complete: ['Complete scan', 'neutral', 'Scan results unavailable'],
+    partial: ['Partial scan', 'warning', 'Incomplete scan'],
+    running: ['Scanning', 'info', 'Scan in progress'],
+    failed: ['Scan failed', 'danger', 'Scan did not complete'],
+    unavailable: ['Unavailable', 'neutral', 'Scan results unavailable'],
+    'not-scanned': ['Not recorded', 'neutral', 'No matching scan'],
+  };
+  const scanState = Object.hasOwn(states, scan?.state) ? scan.state : 'not-scanned';
+  const [status, tone, label] = states[scanState];
+  const counts = ['complete', 'partial'].includes(scanState) && scan?.counts
+    && ['critical', 'high', 'medium', 'low', 'unknown'].every(severity => Number.isSafeInteger(scan.counts[severity]) && scan.counts[severity] >= 0)
+    ? scan.counts : null;
+  if (!counts) return { status: scanState === 'complete' ? 'Unavailable' : status, tone, label, counts: null };
+  const count = value => new Intl.NumberFormat('en-GB').format(value);
+  return {
+    status, counts,
+    tone: counts.critical || counts.high ? 'danger' : scanState === 'partial' || counts.medium || counts.low || counts.unknown ? 'warning' : 'success',
+    label: `${count(counts.critical)} critical · ${count(counts.high)} high`,
+    detail: `${count(counts.medium)} medium · ${count(counts.low)} low · ${count(counts.unknown)} unknown severity`,
+  };
+}
+
+function vulnerabilitySummary(scan, { compact = false, release = false } = {}) {
+  const presentation = vulnerabilityPresentation(scan);
+  const slim = compact || release;
+  const section = node('section', `vulnerability-summary${slim ? ' vulnerability-summary-slim' : ''}${compact ? ' vulnerability-summary-compact' : ''}${release ? ' vulnerability-summary-release' : ''}`);
+  section.setAttribute('aria-label', 'Manifest vulnerability scan evidence');
+  const scanTone = scan?.state === 'partial' ? 'warning' : presentation.tone;
+  const heading = append(node('div', 'vulnerability-heading'), node('span', 'vulnerability-label', 'Manifest vulnerabilities'));
+  if (!slim || scan?.state === 'partial') heading.append(node('span', `badge ${scanTone}`, presentation.status));
+  const main = append(node('div', 'vulnerability-main'),
+    heading,
+    node('p', `vulnerability-metric vulnerability-${presentation.tone}`, presentation.label));
+  if (!slim && presentation.detail) main.append(node('p', 'vulnerability-counts', presentation.detail));
+  const evidence = node('div', 'vulnerability-evidence');
+  const images = scan?.images;
+  if (!slim && images && ['total', 'scanned', 'failed'].every(key => Number.isSafeInteger(images[key]) && images[key] >= 0)) {
+    evidence.append(node('p', 'vulnerability-meta', `${images.scanned}/${images.total} images scanned${images.failed ? ` · ${images.failed} failed` : ''}`));
+  }
+  if (scan?.scannedAt) {
+    const time = node('time', 'vulnerability-meta', `Scanned ${date(scan.scannedAt, !slim)}`);
+    time.setAttribute('datetime', scan.scannedAt);
+    time.title = date(scan.scannedAt, true);
+    evidence.append(time);
+  } else if (presentation.counts) evidence.append(node('p', 'vulnerability-meta', 'Scan date not recorded'));
+  if (safeUrl(scan?.url)) {
+    const link = externalLink('View scan ↗', scan.url, 'vulnerability-results-link');
+    link.setAttribute('aria-label', `View manifest vulnerability scan${scan.runId ? ` run ${scan.runId}` : ''} in Azure DevOps (opens in a new tab)`);
+    evidence.append(link);
+  }
+  append(section, main, evidence);
+  if (!slim) {
+    section.append(node('p', 'vulnerability-scope', 'Finding occurrences across all manifest images.'));
+    if (scan?.state === 'partial') section.append(node('p', 'vulnerability-detail', 'Counts cover scanned images only; findings are incomplete.'));
+    if (scan?.detail) section.append(node('p', 'vulnerability-detail', scan.detail));
+  }
+  return section;
+}
+
 function renderEnvironments() {
   const container = $('environment-grid');
   container.replaceChildren();
@@ -357,7 +418,7 @@ function renderEnvironments() {
     } else {
       append(main, node('p', 'version-empty', 'No deployment found'), node('p', 'card-commit', 'Within scanned history'), badge('unknown'), node('p', 'deployment-time', 'No successful ADO record'));
     }
-    append(card, main, qaSummary(deployment, { compact: true }));
+    append(card, main, qaSummary(deployment, { compact: true }), vulnerabilitySummary(deployment?.vulnerability, { compact: true }));
     const footer = node('div', 'card-footer');
     const latest = environment.latestAttempt;
     if (latest && (!deployment || latest.runId !== deployment.runId || latest.attempt !== deployment.attempt || normalizedStatus(recordStatus(latest)) !== 'succeeded')) {
@@ -462,7 +523,7 @@ function releasePatch(release, latest) {
     && releaseIdentity(release) === releaseIdentity(currentPrd)) identity.append(node('span', 'badge success latest-prd-badge', 'Latest recorded in PRD'));
   const observed = node('span', '', release.history ? `Last PRD deployment ${date(release.observedAt)}` : `Observed ${date(release.observedAt)}`);
   observed.title = date(release.observedAt, true);
-  append(patch, append(node('div', 'patch-heading'), identity, append(node('div', 'patch-meta'), node('span', 'mono', shortCommit(release.commit)), observed)), releaseProgress(release));
+  append(patch, append(node('div', 'patch-heading'), identity, append(node('div', 'patch-meta'), node('span', 'mono', shortCommit(release.commit)), observed)), releaseProgress(release), vulnerabilitySummary(release.vulnerability, { release: true }));
   return patch;
 }
 
@@ -575,7 +636,7 @@ function openDeployment(deployment, name) {
     ['Status', badge(recordStatus(deployment))], ['Pipeline run', `#${deployment.runId}`], ['Stage attempt', deployment.attempt],
     ...runTriggerFields(deployment),
     ['Started', date(deployment.startedAt, true)], ['Finished', deployment.finishedAt ? date(deployment.finishedAt, true) : 'Not finished / not recorded'],
-  ]), retryRequesterNote(deployment), deploymentQaDetails(deployment), evidenceLinks(deployment.evidence, deployment.url));
+  ]), retryRequesterNote(deployment), deploymentQaDetails(deployment), vulnerabilitySummary(deployment.vulnerability), evidenceLinks(deployment.evidence, deployment.url));
   loadStages(deployment.runId, content, false);
 }
 
@@ -623,7 +684,7 @@ function openRelease(release) {
     ['Version', release.version], ['Release series', release.series], ['Manifest commit', release.commit || 'Not recorded', 'mono'],
     ...(!release.history ? [['Release branch', release.branch ? cleanRef(release.branch) : 'Not recorded'], ['Outcome', release.outcome ? badge(release.outcome) : 'Not recorded']] : []),
     ['Evidence', badge(release.confidence || 'inferred')], [release.history ? 'Last PRD deployment' : 'Observed', date(release.observedAt, true)], [release.history ? 'PRD pipeline run' : 'Pipeline run', release.runId ? `#${release.runId}` : 'Not recorded'],
-  ]), node('p', 'drawer-note', release.history ? 'This history is reconstructed from retained deployment records. Missing records do not prove a release was never deployed, and these records do not verify the version currently running.' : 'Observed time belongs to the pipeline evidence. It may differ from the original tag creation time. ADO history does not confirm that the Git tag still exists.'), evidenceLinks(release.evidence, release.url));
+  ]), vulnerabilitySummary(release.vulnerability), node('p', 'drawer-note', release.history ? 'This history is reconstructed from retained deployment records. Missing records do not prove a release was never deployed, and these records do not verify the version currently running.' : 'Observed time belongs to the pipeline evidence. It may differ from the original tag creation time. ADO history does not confirm that the Git tag still exists.'), evidenceLinks(release.evidence, release.url));
 }
 
 function openReleaseProgress(release, progress) {
@@ -652,7 +713,7 @@ function appendProgressDeployment(container, title, deployment, environment) {
     ...runTriggerFields(deployment),
     ['Started', deployment.startedAt ? date(deployment.startedAt, true) : 'Not started / not recorded'],
     ['Finished', deployment.finishedAt ? date(deployment.finishedAt, true) : 'Not finished / not recorded'],
-  ]), retryRequesterNote(deployment), qaSummary(deployment), button('Inspect deployment record', 'button secondary', () => openDeployment(deployment, environment)));
+  ]), retryRequesterNote(deployment), qaSummary(deployment), vulnerabilitySummary(deployment.vulnerability), button('Inspect deployment record', 'button secondary', () => openDeployment(deployment, environment)));
   container.append(section);
 }
 

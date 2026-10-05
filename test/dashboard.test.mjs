@@ -72,7 +72,7 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelin
     },
   });
   return {
-    service: createDashboardService({ ...config, qaPipelines: {}, devUrls }, client, now ? { now } : undefined), calls,
+    service: createDashboardService({ ...config, qaPipelines: {}, scanPipeline: null, devUrls }, client, now ? { now } : undefined), calls,
     setRuns(next) { runs = next; },
     setRetentionPolicy(next) { policy = next; },
     setFailure(path, status = 500) { if (path) failures.set(path, status); else failures.clear(); },

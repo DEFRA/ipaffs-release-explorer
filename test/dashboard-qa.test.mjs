@@ -49,7 +49,7 @@ function fixture({ qa = child, summaryStatus = 200, discovery = 'ok', listFails 
       throw new Error(`Unexpected path: ${path}`);
     },
   });
-  return { service: createDashboardService({ ...config, ...extraConfig }, client), calls };
+  return { service: createDashboardService({ ...config, scanPipeline: null, ...extraConfig }, client), calls };
 }
 
 test('discovers separate QA pipelines and publishes native results on the matching deployment', async () => {

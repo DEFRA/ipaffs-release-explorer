@@ -2,6 +2,7 @@ import { buildDashboard, successfulQaLinks } from './model.mjs';
 import { mapConcurrent } from './ado-client.mjs';
 import { normalizeRetentionPolicy, inferQaRetention } from './retention.mjs';
 import { normalizeTestSummary } from './qa-summary.mjs';
+import { createVulnerabilityService } from './vulnerability.mjs';
 
 const INTERESTING_LOG = /Resolve namespace|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline|Publish namespace access URLs|Generate namespace URLs/i;
 
@@ -10,6 +11,7 @@ export function createDashboardService(config, client, { now = Date.now } = {}) 
   let pending;
   let lastDetails = new Map();
   let lastBuilds = [];
+  const vulnerabilities = createVulnerabilityService(config, client, { now });
 
   async function load() {
     const warnings = [];
@@ -168,8 +170,9 @@ export function createDashboardService(config, client, { now = Date.now } = {}) 
         qaSummaries.set(id, { availability: 'unavailable' });
       }
     });
-    limits.apiRequests = client.requests - callsBefore;
     const dashboard = buildDashboard({ ...dashboardInput, qaSummaries });
+    await vulnerabilities.attach(dashboard, builds);
+    limits.apiRequests = client.requests - callsBefore;
     lastDetails = details;
     lastBuilds = builds;
     cached = dashboard;

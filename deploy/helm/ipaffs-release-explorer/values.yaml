@@ -25,6 +25,7 @@ ado:
     # Optional IDs; exact-name discovery is used when omitted.
     qaDev: null
     qaTst: null
+    scan: null
   runsPerPipeline: 100
   cacheSeconds: 90
 
