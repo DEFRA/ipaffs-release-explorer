@@ -370,20 +370,23 @@ function vulnerabilityPresentation(scan) {
 
 function vulnerabilitySummary(scan, { compact = false, release = false } = {}) {
   const presentation = vulnerabilityPresentation(scan);
-  const section = node('section', `vulnerability-summary${compact ? ' vulnerability-summary-compact' : ''}${release ? ' vulnerability-summary-release' : ''}`);
+  const slim = compact || release;
+  const section = node('section', `vulnerability-summary${slim ? ' vulnerability-summary-slim' : ''}${compact ? ' vulnerability-summary-compact' : ''}${release ? ' vulnerability-summary-release' : ''}`);
   section.setAttribute('aria-label', 'Manifest vulnerability scan evidence');
   const scanTone = scan?.state === 'partial' ? 'warning' : presentation.tone;
+  const heading = append(node('div', 'vulnerability-heading'), node('span', 'vulnerability-label', 'Manifest vulnerabilities'));
+  if (!slim || scan?.state === 'partial') heading.append(node('span', `badge ${scanTone}`, presentation.status));
   const main = append(node('div', 'vulnerability-main'),
-    append(node('div', 'vulnerability-heading'), node('span', 'vulnerability-label', 'Manifest vulnerabilities'), node('span', `badge ${scanTone}`, presentation.status)),
+    heading,
     node('p', `vulnerability-metric vulnerability-${presentation.tone}`, presentation.label));
-  if (presentation.detail) main.append(node('p', 'vulnerability-counts', presentation.detail));
+  if (!slim && presentation.detail) main.append(node('p', 'vulnerability-counts', presentation.detail));
   const evidence = node('div', 'vulnerability-evidence');
   const images = scan?.images;
-  if (images && ['total', 'scanned', 'failed'].every(key => Number.isSafeInteger(images[key]) && images[key] >= 0)) {
+  if (!slim && images && ['total', 'scanned', 'failed'].every(key => Number.isSafeInteger(images[key]) && images[key] >= 0)) {
     evidence.append(node('p', 'vulnerability-meta', `${images.scanned}/${images.total} images scanned${images.failed ? ` · ${images.failed} failed` : ''}`));
   }
   if (scan?.scannedAt) {
-    const time = node('time', 'vulnerability-meta', `Scanned ${date(scan.scannedAt, !compact)}`);
+    const time = node('time', 'vulnerability-meta', `Scanned ${date(scan.scannedAt, !slim)}`);
     time.setAttribute('datetime', scan.scannedAt);
     time.title = date(scan.scannedAt, true);
     evidence.append(time);
@@ -393,9 +396,12 @@ function vulnerabilitySummary(scan, { compact = false, release = false } = {}) {
     link.setAttribute('aria-label', `View manifest vulnerability scan${scan.runId ? ` run ${scan.runId}` : ''} in Azure DevOps (opens in a new tab)`);
     evidence.append(link);
   }
-  append(section, main, evidence, node('p', 'vulnerability-scope', 'Finding occurrences across all manifest images.'));
-  if (scan?.state === 'partial') section.append(node('p', 'vulnerability-detail', 'Counts cover scanned images only; findings are incomplete.'));
-  if (!compact && scan?.detail) section.append(node('p', 'vulnerability-detail', scan.detail));
+  append(section, main, evidence);
+  if (!slim) {
+    section.append(node('p', 'vulnerability-scope', 'Finding occurrences across all manifest images.'));
+    if (scan?.state === 'partial') section.append(node('p', 'vulnerability-detail', 'Counts cover scanned images only; findings are incomplete.'));
+    if (scan?.detail) section.append(node('p', 'vulnerability-detail', scan.detail));
+  }
   return section;
 }
 
