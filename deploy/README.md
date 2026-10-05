@@ -36,12 +36,20 @@ public repository. Populate it from your existing DEV configuration:
 | `ADO_DEV_PIPELINE_ID` | DEV deployment pipeline ID |
 | `ADO_CREATE_RELEASE_PIPELINE_ID` | Release creation pipeline ID |
 | `ADO_RELEASE_PIPELINE_ID` | Release deployment pipeline ID |
-| `ADO_QA_PIPELINE_ID` | QA pipeline ID |
+| `ADO_QA_PIPELINE_ID` | Legacy QA pipeline ID for retained deployment links; an empty history is allowed |
+| `ADO_QA_DEV_PIPELINE_ID` | Optional fixed DEV QA pipeline ID; pins evidence lookup across pipeline renames and folder moves |
+| `ADO_QA_TST_PIPELINE_ID` | Optional fixed TST QA pipeline ID; pins evidence lookup across pipeline renames and folder moves |
+| `ADO_SCAN_PIPELINE_ID` | Optional manifest vulnerability scan pipeline ID; pins evidence lookup across pipeline renames and folder moves |
 | `DEV_B2C_URL` | Optional canonical DEV public-facing frontend HTTPS URL; set together with `DEV_B2B_URL` |
 | `DEV_B2B_URL` | Optional canonical DEV internal frontend HTTPS URL; set together with `DEV_B2C_URL` |
 
 Identity IDs are outputs of the deployment job. Do not add them to the variable
 group; the pipeline obtains them from Azure on every deployment.
+
+The three optional evidence pipeline IDs must be positive integers no greater
+than `100000000`. When omitted, the app uses exact-name discovery. Configure
+these IDs in this private variable group when pipelines have been renamed;
+the deployment passes them through Helm without putting real IDs in source.
 
 The canonical `dev` namespace can use frontend addresses that differ from the
 AKS proxy URLs recorded by older pipelines. Configure both `DEV_B2C_URL` and
