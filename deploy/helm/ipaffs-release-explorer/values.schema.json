@@ -96,7 +96,7 @@
       "required": ["requests", "limits"],
       "properties": {
         "requests": {"type": "object", "required": ["cpu", "memory"]},
-        "limits": {"type": "object", "required": ["cpu", "memory"]}
+        "limits": {"type": "object", "required": ["memory"]}
       }
     }
   },
