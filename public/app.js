@@ -441,9 +441,11 @@ function renderEnvironments() {
 }
 
 function renderNamespaces() {
+  const namespaceGroup = namespace => namespace.kind === 'canonical' ? 0 : namespace.kind === 'release' ? 1 : 2;
   const lastSuccessTime = namespace => Date.parse(namespace.lastSuccess?.finishedAt) || 0;
   const namespaces = [...array(state.data.namespaces)].sort((a, b) =>
-    lastSuccessTime(b) - lastSuccessTime(a) || String(a.name || '').localeCompare(String(b.name || '')));
+    namespaceGroup(a) - namespaceGroup(b) || lastSuccessTime(b) - lastSuccessTime(a)
+    || String(a.name || '').localeCompare(String(b.name || '')));
   $('namespace-count').textContent = `${namespaces.length} found`;
   const container = $('namespace-table');
   container.replaceChildren();
