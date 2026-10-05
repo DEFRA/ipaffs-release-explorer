@@ -15,18 +15,31 @@ export function sampleDashboard() {
       executed: counts.passed + counts.failed + counts.other, passPercentage: 100 * counts.passed / (counts.passed + counts.failed + counts.other) } : null,
   });
   const linkedQa = (...runs) => ({ state: 'linked', latest: runs[0], runs });
+  const vulnerability = (id, state, hours, counts = null, images = null) => ({
+    state, counts, images, scannedAt: ['complete', 'partial'].includes(state) ? at(hours) : null,
+    runId: id, url: id ? `${url(id)}&view=results` : null,
+    detail: 'Illustrative registry image scan for this manifest commit, covering references from all environments.',
+  });
+  const currentScan = vulnerability(401, 'complete', 0.5,
+    { critical: 2, high: 18, medium: 83, low: 24, unknown: 1 }, { total: 12, scanned: 12, failed: 0 });
+  const previousScan = vulnerability(402, 'partial', 118,
+    { critical: 0, high: 0, medium: 21, low: 5, unknown: 0 }, { total: 10, scanned: 8, failed: 2 });
+  const failedScan = vulnerability(403, 'failed', 140);
   const deploy = (id, environment, version, status, hours, namespace = environment.toLowerCase()) => ({
     runId: id, environment, namespace, version, status, commit: 'a'.repeat(40), attempt: 1,
     startedAt: status === 'pending' ? null : at(hours + 0.2), finishedAt: status === 'succeeded' ? at(hours) : null,
     url: url(id), evidence: evidence(id), qa: { state: 'not-linked', latest: null, runs: [] },
+    vulnerability: vulnerability(null, 'not-scanned', 0),
   });
   const tst = deploy(100, 'TST', '4.2.0', 'succeeded', 24);
   const pre = deploy(100, 'PRE', '4.2.0', 'succeeded', 12);
   const dev = deploy(101, 'DEV', 'master', 'succeeded', 1);
+  for (const deployment of [dev, tst, pre]) deployment.vulnerability = currentScan;
   dev.qa = linkedQa(qaRun(301, 'DEV', 'succeeded', 0.3, { passed: 374, failed: 0, skipped: 18, other: 0 }));
   tst.qa = linkedQa(qaRun(302, 'TST', 'failed', 23, { passed: 372, failed: 4, skipped: 16, other: 0 }));
   dev.trigger = { reason: 'batchedCI', requestedBy: 'Example build service', requestedFor: 'Example build service' };
   const previousPrd = { ...deploy(99, 'PRD', '4.1.3', 'succeeded', 120), commit: 'b'.repeat(40), versionKind: 'release-tag', sourceRef: 'refs/tags/4.1.3' };
+  previousPrd.vulnerability = previousScan;
   const dashboard = {
     readOnly: true, mode: 'sample', organization, project, fetchedAt: now.toISOString(),
     limits: { runCount: 3, retrievedRuns: 3, runsPerPipeline: 100, limited: true, scope: 'Illustrative sample data; no live ADO requests.' },
@@ -61,7 +74,11 @@ export function sampleDashboard() {
   };
   for (const deployment of [dashboard.namespaces[1].lastSuccess, dashboard.namespaces[1].latestAttempt]) {
     deployment.trigger = { reason: 'manual', requestedBy: 'Example operator', requestedFor: 'Example operator' };
+    deployment.commit = 'd'.repeat(40);
+    deployment.vulnerability = vulnerability(404, 'running', 0);
   }
+  dashboard.environments[3].latestAttempt.vulnerability = currentScan;
+  dashboard.releases.forEach((release, index) => { release.vulnerability = [currentScan, previousScan, failedScan][index]; });
   dashboard.namespaces[1].access = {
     runId: 102, observedAt: at(4), evidence: evidence(102),
     links: [
@@ -94,6 +111,7 @@ export function sampleDashboard() {
   dashboard.releases[2].progress = ['DEV', 'TST', 'PRE', 'PRD'].map(missing);
   const historicalDeployment = (id, environment, version, hours, commit) => ({
     ...deploy(id, environment, version, 'succeeded', hours), commit,
+    vulnerability: version === '4.1.3' ? previousScan : failedScan,
     versionKind: 'release-tag', sourceRef: `refs/tags/${version}`,
     trigger: { reason: 'manual', requestedBy: 'Example operator', requestedFor: 'Example operator' },
   });

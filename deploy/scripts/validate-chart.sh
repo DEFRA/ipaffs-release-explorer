@@ -22,6 +22,8 @@ values=(
 helm lint "$chart" --strict "${values[@]}"
 helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
   "${values[@]}" > "$temp_dir/rendered.yaml"
+helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
+  "${values[@]}" --set ado.pipelines.scan=107 > "$temp_dir/scan-override.yaml"
 dev_url_values=(
   --set-string devUrls.b2c=https://notifications.dev.example.test
   --set-string devUrls.b2b=https://notifications-int.dev.example.test/notifications
@@ -61,6 +63,8 @@ const configValue = (yaml, name) => JSON.parse(resource(yaml, 'ConfigMap').match
 const configChecksum = yaml => resource(yaml, 'Deployment').match(/^        checksum\/config: (.+)$/m)[1];
 
 const baseline = read('rendered.yaml');
+assert(!resource(baseline, 'ConfigMap').includes('ADO_SCAN_PIPELINE_ID:'), 'Scan discovery must work without an override');
+assert.equal(configValue(read('scan-override.yaml'), 'ADO_SCAN_PIPELINE_ID'), '107');
 for (const name of ['DEV_B2C_URL', 'DEV_B2B_URL']) {
   assert.equal(configValue(baseline, name), '', 'Canonical DEV links must have no public defaults');
 }

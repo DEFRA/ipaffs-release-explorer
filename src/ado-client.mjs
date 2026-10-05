@@ -111,6 +111,7 @@ export function createTokenProvider({ env = process.env, executeFile = execute, 
 export class AdoClient {
   constructor(config, { fetchImpl = fetch, authorization = createTokenProvider() } = {}) {
     this.base = `${config.organization}/${encodeURIComponent(config.project)}/_apis/`;
+    this.organizationBase = `${config.organization}/_apis/`;
     this.fetchImpl = fetchImpl;
     this.authorization = authorization;
     this.requests = 0;
@@ -123,6 +124,33 @@ export class AdoClient {
     url.searchParams.set('api-version', /^build\/builds(?:\/\d+)?$/.test(path) ? BUILD_SUMMARY_API_VERSION : '7.1');
     for (const [key, value] of Object.entries(query)) if (value !== undefined) url.searchParams.set(key, String(value));
     return this.#request(url, { accept: text ? 'text/plain' : 'application/json', text, limit: text ? 4 * 1024 * 1024 : 12 * 1024 * 1024 });
+  }
+
+  async getScanReport(buildId) {
+    if (!/^[1-9]\d*$/.test(String(buildId)) || !Number.isSafeInteger(Number(buildId))) throw new Error('Invalid scan build ID');
+    const { data } = await this.get(`build/builds/${buildId}/artifacts`);
+    if (!Array.isArray(data?.value)) throw new AdoError('invalid_response', 'Azure DevOps returned an unexpected artifact list.');
+    const artifacts = data.value.filter(artifact => artifact?.name === 'scan-baseline');
+    if (!artifacts.length) return null;
+    const artifact = artifacts[0];
+    const container = typeof artifact.resource?.data === 'string' && artifact.resource.data.match(/^#\/([1-9]\d*)\/scan-baseline$/);
+    if (artifacts.length !== 1 || artifact.resource?.type !== 'Container' || !container
+      || !Number.isSafeInteger(Number(container[1]))) {
+      throw new AdoError('invalid_response', 'Azure DevOps returned an unsupported scan artifact.');
+    }
+    // Construct the exact file URL inside the configured organization. Never use
+    // artifact downloadUrl/contentLocation values or fetch the full scan archive.
+    const url = new URL(`resources/Containers/${container[1]}`, this.organizationBase);
+    url.searchParams.set('api-version', '7.1-preview.4');
+    url.searchParams.set('itemPath', 'scan-baseline/report.json');
+    url.searchParams.set('preferRedirect', 'false');
+    // The Container API uses Accept to distinguish file content from metadata.
+    // ADO streams this file directly; redirects remain forbidden in #request.
+    const response = await this.#request(url, { accept: 'application/octet-stream', text: false, limit: 12 * 1024 * 1024 });
+    if (!response.data || typeof response.data !== 'object' || Array.isArray(response.data)) {
+      throw new AdoError('invalid_response', 'Azure DevOps returned an unexpected scan report.');
+    }
+    return response.data;
   }
 
   async #request(url, { accept, text, limit }) {

@@ -59,6 +59,10 @@ export function loadConfig(env = process.env) {
       qaDev: { id: env.ADO_QA_DEV_PIPELINE_ID ? integer('ADO_QA_DEV_PIPELINE_ID') : null, name: 'Test DEV', path: '\\QA' },
       qaTst: { id: env.ADO_QA_TST_PIPELINE_ID ? integer('ADO_QA_TST_PIPELINE_ID') : null, name: 'Test TST', path: '\\QA' },
     },
+    scanPipeline: {
+      id: env.ADO_SCAN_PIPELINE_ID ? integer('ADO_SCAN_PIPELINE_ID') : null,
+      name: 'Container Vulnerability Scanning', path: '\\',
+    },
     environmentNames: ['DEV', 'TST', 'PRE', 'PRD'],
     devUrls: canonicalDevUrls(env),
     runsPerPipeline: integer('ADO_RUNS_PER_PIPELINE', 100, 1, 100),
