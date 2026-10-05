@@ -22,6 +22,12 @@ export function sampleDashboard() {
   });
   const currentScan = vulnerability(401, 'complete', 0.5,
     { critical: 2, high: 18, medium: 83, low: 24, unknown: 1 }, { total: 12, scanned: 12, failed: 0 });
+  const masterScan = {
+    ...vulnerability(405, 'complete', 0.1,
+      { critical: 1, high: 12, medium: 70, low: 20, unknown: 0 }, { total: 12, scanned: 12, failed: 0 }),
+    matchedBy: 'assumed-master', sourceRef: 'refs/heads/master', sourceCommit: 'e'.repeat(40),
+    detail: 'Illustrative latest master scan, used for current DEV under the assumption that DEV follows master.',
+  };
   const previousScan = vulnerability(402, 'partial', 118,
     { critical: 0, high: 0, medium: 21, low: 5, unknown: 0 }, { total: 10, scanned: 8, failed: 2 });
   const failedScan = vulnerability(403, 'failed', 140);
@@ -50,7 +56,7 @@ export function sampleDashboard() {
       { label: 'Revision-specific QA', status: 'partial', detail: 'A linked QA run does not prove the exact revision tested.' },
     ],
     environments: [
-      { name: 'DEV', namespace: 'dev', lastSuccess: dev, latestAttempt: dev },
+      { name: 'DEV', namespace: 'dev', lastSuccess: dev, latestAttempt: dev, vulnerability: masterScan },
       { name: 'TST', namespace: 'tst', lastSuccess: tst, latestAttempt: tst },
       { name: 'PRE', namespace: 'pre', lastSuccess: pre, latestAttempt: pre },
       { name: 'PRD', namespace: 'prd', lastSuccess: previousPrd, latestAttempt: deploy(100, 'PRD', '4.2.0', 'pending', 0) },

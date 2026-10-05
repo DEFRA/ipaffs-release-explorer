@@ -371,10 +371,14 @@ function vulnerabilityPresentation(scan) {
 function vulnerabilitySummary(scan, { compact = false, release = false } = {}) {
   const presentation = vulnerabilityPresentation(scan);
   const slim = compact || release;
+  const assumedMaster = scan?.matchedBy === 'assumed-master';
+  const assumption = 'Latest master scan; DEV is assumed to follow master.';
   const section = node('section', `vulnerability-summary${slim ? ' vulnerability-summary-slim' : ''}${compact ? ' vulnerability-summary-compact' : ''}${release ? ' vulnerability-summary-release' : ''}`);
   section.setAttribute('aria-label', 'Manifest vulnerability scan evidence');
   const scanTone = scan?.state === 'partial' ? 'warning' : presentation.tone;
-  const heading = append(node('div', 'vulnerability-heading'), node('span', 'vulnerability-label', 'Manifest vulnerabilities'));
+  const label = node('span', 'vulnerability-label', `Manifest vulnerabilities${assumedMaster ? ' · master' : ''}`);
+  if (assumedMaster) label.title = assumption;
+  const heading = append(node('div', 'vulnerability-heading'), label);
   if (!slim || scan?.state === 'partial') heading.append(node('span', `badge ${scanTone}`, presentation.status));
   const main = append(node('div', 'vulnerability-main'),
     heading,
@@ -399,6 +403,11 @@ function vulnerabilitySummary(scan, { compact = false, release = false } = {}) {
   append(section, main, evidence);
   if (!slim) {
     section.append(node('p', 'vulnerability-scope', 'Finding occurrences across all manifest images.'));
+    if (assumedMaster) {
+      const provenance = node('p', 'vulnerability-detail', `${assumption}${scan.sourceCommit ? ` Scanned commit ${shortCommit(scan.sourceCommit)}.` : ''}`);
+      if (scan.sourceCommit) provenance.title = scan.sourceCommit;
+      section.append(provenance);
+    }
     if (scan?.state === 'partial') section.append(node('p', 'vulnerability-detail', 'Counts cover scanned images only; findings are incomplete.'));
     if (scan?.detail) section.append(node('p', 'vulnerability-detail', scan.detail));
   }
@@ -418,7 +427,7 @@ function renderEnvironments() {
     } else {
       append(main, node('p', 'version-empty', 'No deployment found'), node('p', 'card-commit', 'Within scanned history'), badge('unknown'), node('p', 'deployment-time', 'No successful ADO record'));
     }
-    append(card, main, qaSummary(deployment, { compact: true }), vulnerabilitySummary(deployment?.vulnerability, { compact: true }));
+    append(card, main, qaSummary(deployment, { compact: true }), vulnerabilitySummary(environment.vulnerability ?? deployment?.vulnerability, { compact: true }));
     const footer = node('div', 'card-footer');
     const latest = environment.latestAttempt;
     if (latest && (!deployment || latest.runId !== deployment.runId || latest.attempt !== deployment.attempt || normalizedStatus(recordStatus(latest)) !== 'succeeded')) {
