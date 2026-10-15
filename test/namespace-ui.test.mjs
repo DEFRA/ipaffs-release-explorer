@@ -66,13 +66,14 @@ test('namespace table shows and counts only confirmed existing namespaces while 
   const { context, elements } = renderer(data);
   context.renderNamespaces();
   const table = elements.get('namespace-table').children[0];
-  assert.match(table.children[0].textContent, /Type Cluster status Last recorded version/);
+  assert.match(table.children[0].textContent, /Type Last recorded version/);
+  assert.doesNotMatch(table.children[0].textContent, /Cluster status/);
   const rows = table.children[1].children;
   assert.equal(rows.length, 5);
   assert.deepEqual(rows.map(row => row.children[0].children[0].textContent), ['dev', 'release-newer', 'release-older', 'branch-a', 'branch-z']);
-  assert.ok(rows.every(row => row.children[2].children[0].textContent === 'Exists'));
-  assert.ok(rows.every(row => /Succeeded/.test(row.children[6].textContent)), 'ADO latest attempts remain successful');
-  assert.ok(rows.every(row => !/Not recorded/.test(row.children[3].textContent)), 'visible namespaces retain their deployment versions');
+  assert.ok(rows.every(row => row.children.length === 6));
+  assert.ok(rows.every(row => /Succeeded/.test(row.children[5].textContent)), 'ADO latest attempts remain successful');
+  assert.ok(rows.every(row => !/Not recorded/.test(row.children[2].textContent)), 'visible namespaces retain their deployment versions');
   assert.ok(rows.every(row => linksIn(row).length === 1));
   assert.doesNotMatch(table.textContent, /4-2-x|feature-cleanup|feature-unchecked|without-runtime|unexpected-status|Missing|Terminating|Unknown/);
   assert.equal(JSON.stringify(data.namespaces), sourceHistory, 'filtering must not delete or mutate the source deployment history');

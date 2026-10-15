@@ -64,14 +64,6 @@ function namespaceRuntime(namespace) {
   return { status, label, tone, detail: namespace.runtime?.detail || fallbackDetail, checkedAt: namespace.runtime?.checkedAt };
 }
 
-function namespaceRuntimeCell(namespace) {
-  const runtime = namespaceRuntime(namespace);
-  const cell = append(node('td', 'namespace-runtime'), node('span', `badge ${runtime.tone}`, runtime.label));
-  cell.title = runtime.detail;
-  cell.append(node('span', 'cell-secondary', runtime.checkedAt ? `Checked ${date(runtime.checkedAt)}` : 'Not checked'));
-  return cell;
-}
-
 function applicationLink(label, value, className) {
   const url = safeApplicationUrl(value);
   if (!url) return null;
@@ -487,7 +479,7 @@ function renderNamespaces() {
   if (!namespaces.length) return container.append(empty('No confirmed existing DEV namespaces', checks?.enabled
     ? 'No namespaces in the scanned deployment history are currently confirmed to exist. Check the cluster access status above.'
     : 'Enable cluster checks to show namespaces confirmed to exist.'));
-  const { table, body } = makeTable(['Namespace / branch', 'Type', 'Cluster status', 'Last recorded version', 'Last success', 'Run trigger', 'Latest attempt']);
+  const { table, body } = makeTable(['Namespace / branch', 'Type', 'Last recorded version', 'Last success', 'Run trigger', 'Latest attempt']);
   namespaces.forEach((namespace) => {
     const open = () => openNamespace(namespace);
     const row = clickableRow(open);
@@ -495,7 +487,6 @@ function renderNamespaces() {
     append(row,
       append(node('td'), button(namespace.name || 'Unknown namespace', 'row-trigger mono', open), node('span', 'cell-secondary truncate', cleanRef(namespace.branch)), namespaceLaunchShortcuts(namespace)),
       append(node('td'), badge(namespace.kind || 'Unknown', 'neutral')),
-      namespaceRuntimeCell(namespace),
       append(node('td'), node('span', 'cell-primary', success ? deploymentVersion(success) : 'Not recorded'), success ? node('span', 'cell-secondary mono', shortCommit(success.commit)) : null),
       node('td', 'muted', success ? date(success.finishedAt) : 'No success found'),
       runTriggerSummary(success),
