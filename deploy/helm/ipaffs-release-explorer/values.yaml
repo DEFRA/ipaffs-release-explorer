@@ -13,6 +13,10 @@ workloadIdentity:
   clientId: ""
   tenantId: ""
 
+kubernetes:
+  # Read only the current existence of namespace names reconstructed from ADO.
+  namespaceChecksEnabled: true
+
 ado:
   # Required at deployment time; no organisation or pipeline identifiers are public defaults.
   organization: ""

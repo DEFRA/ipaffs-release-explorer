@@ -45,6 +45,12 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "explorer.name" . }}
+          {{- if .Values.kubernetes.namespaceChecksEnabled }}
+          volumeMounts:
+            - name: kubernetes-api
+              mountPath: /var/run/secrets/kubernetes.io/serviceaccount
+              readOnly: true
+          {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
           startupProbe:
@@ -74,3 +80,17 @@ spec:
                   value: "127.0.0.1:4317"
             periodSeconds: 20
             timeoutSeconds: 3
+      {{- if .Values.kubernetes.namespaceChecksEnabled }}
+      volumes:
+        - name: kubernetes-api
+          projected:
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - key: ca.crt
+                      path: ca.crt
+      {{- end }}

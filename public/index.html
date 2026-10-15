@@ -34,7 +34,7 @@
       <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
         <div class="section-heading"><div><h2>Environments</h2><p>Last successful deployment recorded by ADO. Cluster health is not observed.</p></div><span class="section-label">DEV → TST → PRE → PRD</span></div>
         <div id="environment-grid" class="environment-grid"></div>
-        <section class="surface namespace-section"><div class="surface-heading"><div><h2>DEV namespaces</h2><p>Namespaces found in the pipeline runs scanned.</p></div><span id="namespace-count" class="badge neutral"></span></div><div id="namespace-table" class="table-wrap"></div></section>
+        <section class="surface namespace-section"><div class="surface-heading"><div><h2>DEV namespaces</h2><p>Namespaces from the scanned pipeline runs confirmed to exist in the cluster.</p><p id="namespace-check-status"></p></div><span id="namespace-count" class="badge neutral"></span></div><div id="namespace-table" class="table-wrap"></div></section>
         <section class="surface evidence-section"><div class="surface-heading"><div><h2>What the data can tell us</h2><p>Coverage and limits of existing pipeline evidence.</p></div></div><div id="coverage" class="coverage-grid"></div><div id="warnings" class="warnings"></div></section>
       </section>
       <section id="panel-releases" role="tabpanel" aria-labelledby="tab-releases" hidden>

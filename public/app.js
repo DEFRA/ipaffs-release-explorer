@@ -2,7 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const AUTO_REFRESH_MS = 3 * 60 * 1000;
-const state = { data: null, mode: 'live', tab: 'overview', loading: false, request: 0, detailRequest: 0, lastRefreshAt: 0 };
+const state = { data: null, mode: 'live', tab: 'overview', loading: false, request: 0, detailRequest: 0, namespaceDetail: null, lastRefreshAt: 0 };
 let autoRefreshTimer;
 const array = (value) => Array.isArray(value) ? value : [];
 
@@ -44,7 +44,32 @@ function safeApplicationUrl(value) {
 }
 
 function namespaceAccessLinks(namespace) {
+  if (namespaceLaunchBlocked(namespace)) return [];
   return array(namespace.access?.links).filter((link) => safeApplicationUrl(link.url));
+}
+
+function namespaceLaunchBlocked(namespace) {
+  return ['missing', 'terminating'].includes(namespace.runtime?.status);
+}
+
+function namespaceRuntime(namespace) {
+  const states = {
+    exists: ['Exists', 'success', 'The namespace existed when the cluster was checked.'],
+    terminating: ['Terminating', 'warning', 'The cluster has marked this namespace for deletion.'],
+    missing: ['Missing', 'neutral', 'The namespace was absent when the cluster was checked.'],
+    unknown: ['Unknown', 'neutral', 'Cluster presence has not been checked.'],
+  };
+  const status = Object.hasOwn(states, namespace.runtime?.status) ? namespace.runtime.status : 'unknown';
+  const [label, tone, fallbackDetail] = states[status];
+  return { status, label, tone, detail: namespace.runtime?.detail || fallbackDetail, checkedAt: namespace.runtime?.checkedAt };
+}
+
+function namespaceRuntimeCell(namespace) {
+  const runtime = namespaceRuntime(namespace);
+  const cell = append(node('td', 'namespace-runtime'), node('span', `badge ${runtime.tone}`, runtime.label));
+  cell.title = runtime.detail;
+  cell.append(node('span', 'cell-secondary', runtime.checkedAt ? `Checked ${date(runtime.checkedAt)}` : 'Not checked'));
+  return cell;
 }
 
 function applicationLink(label, value, className) {
@@ -59,6 +84,7 @@ function applicationLink(label, value, className) {
 }
 
 function namespaceLaunchShortcuts(namespace) {
+  if (namespaceLaunchBlocked(namespace)) return node('span', 'cell-secondary', 'Launch links hidden');
   const links = namespaceAccessLinks(namespace);
   const shortcuts = node('div', 'namespace-launch-shortcuts');
   for (const audience of ['b2c', 'b2b']) {
@@ -443,14 +469,25 @@ function renderEnvironments() {
 function renderNamespaces() {
   const namespaceGroup = namespace => namespace.kind === 'canonical' ? 0 : namespace.kind === 'release' ? 1 : 2;
   const lastSuccessTime = namespace => Date.parse(namespace.lastSuccess?.finishedAt) || 0;
-  const namespaces = [...array(state.data.namespaces)].sort((a, b) =>
+  const namespaces = array(state.data.namespaces).filter(namespace => namespace.runtime?.status === 'exists').sort((a, b) =>
     namespaceGroup(a) - namespaceGroup(b) || lastSuccessTime(b) - lastSuccessTime(a)
     || String(a.name || '').localeCompare(String(b.name || '')));
+  if (state.namespaceDetail && !namespaces.some(namespace => namespace.name === state.namespaceDetail)) {
+    if ($('detail-dialog').open) $('detail-dialog').close();
+    state.namespaceDetail = null;
+  }
   $('namespace-count').textContent = `${namespaces.length} found`;
+  const checks = state.data.namespaceChecks;
+  const checkStatus = !checks?.enabled ? 'Cluster checks disabled.'
+    : checks.status === 'available' ? 'Cluster presence checked.'
+      : checks.status === 'partial' ? 'Some cluster checks were unavailable.' : 'Cluster checks unavailable.';
+  $('namespace-check-status').textContent = `${checkStatus}${checks?.checkedAt ? ` Last check ${date(checks.checkedAt, true)}.` : ''} Only namespaces confirmed to exist are shown.`;
   const container = $('namespace-table');
   container.replaceChildren();
-  if (!namespaces.length) return container.append(empty('No DEV namespaces found', 'Namespace details may be missing from the available logs or deployment records.'));
-  const { table, body } = makeTable(['Namespace / branch', 'Type', 'Last recorded version', 'Last success', 'Run trigger', 'Latest attempt']);
+  if (!namespaces.length) return container.append(empty('No confirmed existing DEV namespaces', checks?.enabled
+    ? 'No namespaces in the scanned deployment history are currently confirmed to exist. Check the cluster access status above.'
+    : 'Enable cluster checks to show namespaces confirmed to exist.'));
+  const { table, body } = makeTable(['Namespace / branch', 'Type', 'Cluster status', 'Last recorded version', 'Last success', 'Run trigger', 'Latest attempt']);
   namespaces.forEach((namespace) => {
     const open = () => openNamespace(namespace);
     const row = clickableRow(open);
@@ -458,6 +495,7 @@ function renderNamespaces() {
     append(row,
       append(node('td'), button(namespace.name || 'Unknown namespace', 'row-trigger mono', open), node('span', 'cell-secondary truncate', cleanRef(namespace.branch)), namespaceLaunchShortcuts(namespace)),
       append(node('td'), badge(namespace.kind || 'Unknown', 'neutral')),
+      namespaceRuntimeCell(namespace),
       append(node('td'), node('span', 'cell-primary', success ? deploymentVersion(success) : 'Not recorded'), success ? node('span', 'cell-secondary mono', shortCommit(success.commit)) : null),
       node('td', 'muted', success ? date(success.finishedAt) : 'No success found'),
       runTriggerSummary(success),
@@ -602,6 +640,7 @@ function activateTab(name) {
 }
 
 function showDetail(eyebrow, title) {
+  state.namespaceDetail = null;
   state.detailRequest++;
   $('detail-eyebrow').textContent = eyebrow;
   $('detail-title').textContent = title;
@@ -655,12 +694,18 @@ function openDeployment(deployment, name) {
 
 function openNamespace(namespace) {
   const content = showDetail('DEV NAMESPACE', namespace.name || 'Unknown namespace');
-  append(content, node('p', 'detail-summary', 'Discovered from retained ADO history. Namespace existence and current health are not checked.'), detailFields([
+  state.namespaceDetail = namespace.name;
+  const runtime = namespaceRuntime(namespace);
+  append(content, node('p', 'detail-summary', 'Discovered from retained ADO history. Cluster status shows namespace presence at the last check; application health and the running version are not checked.'), detailFields([
     ['Type', namespace.kind], ['Branch', cleanRef(namespace.branch)],
+    ['Cluster status', node('span', `badge ${runtime.tone}`, runtime.label)],
+    ['Cluster checked', runtime.checkedAt ? date(runtime.checkedAt, true) : 'Not checked'],
+    ['Cluster detail', runtime.detail],
     ['Last version', namespace.lastSuccess ? deploymentVersion(namespace.lastSuccess) : 'No successful deployment found'],
     ['Last success', namespace.lastSuccess ? date(namespace.lastSuccess.finishedAt, true) : 'Not recorded'],
     ['Latest attempt', badge(recordStatus(namespace.latestAttempt))],
   ]));
+  if (runtime.status === 'missing') content.append(node('p', 'drawer-note', 'Missing means the namespace was absent at the last check. This does not establish whether or when it was deleted. Historical deployment records are retained.'));
   if (namespace.lastSuccess) append(content, append(node('section', 'drawer-section'),
     node('h3', '', 'Last successful deployment trigger'),
     detailFields([['Pipeline run', `#${namespace.lastSuccess.runId}`], ...runTriggerFields(namespace.lastSuccess)]),
@@ -683,11 +728,14 @@ function openNamespace(namespace) {
         ['URLs recorded', date(namespace.access.observedAt, true)],
       ]));
     }
-  } else launchSection.append(node('p', 'drawer-note', 'No application URLs were recorded in the available pipeline logs.'));
+  } else if (namespaceLaunchBlocked(namespace)) launchSection.append(node('p', 'drawer-note', runtime.status === 'missing'
+    ? 'Application launch links are hidden because the namespace was missing at the last cluster check.'
+    : 'Application launch links are hidden because the namespace is terminating.'));
+  else launchSection.append(node('p', 'drawer-note', 'No application URLs were recorded in the available pipeline logs.'));
   content.append(launchSection);
   if (namespace.lastSuccess) content.append(button('Inspect last successful deployment', 'button secondary', () => openDeployment(namespace.lastSuccess, 'DEV')));
   if (namespace.latestAttempt && namespace.latestAttempt.runId !== namespace.lastSuccess?.runId) content.append(append(node('div', 'actions'), button('Inspect latest attempt', 'button secondary', () => openDeployment(namespace.latestAttempt, 'DEV'))));
-  if (links.length && array(namespace.access.evidence).length) content.append(evidenceLinks(namespace.access.evidence));
+  if (array(namespace.access?.evidence).length) content.append(evidenceLinks(namespace.access.evidence));
 }
 
 function openRelease(release) {
@@ -805,7 +853,7 @@ tabs.forEach((tab, index) => {
   });
 });
 $('close-detail').addEventListener('click', () => $('detail-dialog').close());
-$('detail-dialog').addEventListener('close', () => { state.detailRequest++; });
+$('detail-dialog').addEventListener('close', () => { state.detailRequest++; state.namespaceDetail = null; });
 $('detail-dialog').addEventListener('click', (event) => {
   const rect = $('detail-dialog').getBoundingClientRect();
   if (event.target === $('detail-dialog') && (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom)) $('detail-dialog').close();

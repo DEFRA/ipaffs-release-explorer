@@ -48,11 +48,12 @@ export function sampleDashboard() {
   previousPrd.vulnerability = previousScan;
   const dashboard = {
     readOnly: true, mode: 'sample', organization, project, fetchedAt: now.toISOString(),
+    namespaceChecks: { enabled: true, checkedAt: now.toISOString(), status: 'partial' },
     limits: { runCount: 3, retrievedRuns: 3, runsPerPipeline: 100, limited: true, scope: 'Illustrative sample data; no live ADO requests.' },
     warnings: [{ code: 'sample', message: 'Sample data is illustrative. Switch to live data to read your ADO project.' }],
     coverage: [
       { label: 'Deployment history', status: 'available', detail: 'Recorded stage outcomes, including releases waiting for approval.' },
-      { label: 'Runtime health', status: 'unavailable', detail: 'No Kubernetes access is used in this prototype.' },
+      { label: 'DEV namespace presence', status: 'partial', detail: 'Only namespaces confirmed to exist appear in the list. One sample namespace check is unavailable. Application health and running versions are not checked.' },
       { label: 'Revision-specific QA', status: 'partial', detail: 'A linked QA run does not prove the exact revision tested.' },
     ],
     environments: [
@@ -62,8 +63,14 @@ export function sampleDashboard() {
       { name: 'PRD', namespace: 'prd', lastSuccess: previousPrd, latestAttempt: deploy(100, 'PRD', '4.2.0', 'pending', 0) },
     ],
     namespaces: [
-      { name: 'dev', kind: 'canonical', branch: 'refs/heads/master', lastSuccess: dev, latestAttempt: dev },
-      { name: '4-2-x', kind: 'release', branch: 'refs/heads/RELEASE/4.2.x', lastSuccess: deploy(102, 'DEV', 'RELEASE/4.2.x', 'succeeded', 4, '4-2-x'), latestAttempt: deploy(102, 'DEV', 'RELEASE/4.2.x', 'succeeded', 4, '4-2-x') },
+      { name: 'dev', kind: 'canonical', branch: 'refs/heads/master', lastSuccess: dev, latestAttempt: dev,
+        runtime: { status: 'exists', checkedAt: now.toISOString(), detail: 'Sample: the DEV namespace exists in the cluster.' } },
+      { name: '4-2-x', kind: 'release', branch: 'refs/heads/RELEASE/4.2.x', lastSuccess: deploy(102, 'DEV', 'RELEASE/4.2.x', 'succeeded', 4, '4-2-x'), latestAttempt: deploy(102, 'DEV', 'RELEASE/4.2.x', 'succeeded', 4, '4-2-x'),
+        runtime: { status: 'missing', checkedAt: now.toISOString(), detail: 'Sample: the cluster returned Not Found for this namespace.' } },
+      { name: 'feature-cleanup', kind: 'branch', branch: 'refs/heads/feature/cleanup', lastSuccess: deploy(103, 'DEV', 'feature/cleanup', 'succeeded', 2, 'feature-cleanup'), latestAttempt: deploy(103, 'DEV', 'feature/cleanup', 'succeeded', 2, 'feature-cleanup'),
+        runtime: { status: 'terminating', checkedAt: now.toISOString(), detail: 'Sample: this namespace has a deletion timestamp and is terminating.' } },
+      { name: 'feature-unchecked', kind: 'branch', branch: 'refs/heads/feature/unchecked', lastSuccess: deploy(104, 'DEV', 'feature/unchecked', 'succeeded', 3, 'feature-unchecked'), latestAttempt: deploy(104, 'DEV', 'feature/unchecked', 'succeeded', 3, 'feature-unchecked'),
+        runtime: { status: 'unknown', checkedAt: now.toISOString(), detail: 'Sample: the cluster request timed out, so namespace presence is unknown.' } },
     ],
     releases: [
       { version: '4.2.0', series: '4.2', commit: 'a'.repeat(40), branch: 'RELEASE/4.2.x', observedAt: at(25), outcome: 'created', runId: 100, url: url(100), confidence: 'recorded', evidence: evidence(100) },

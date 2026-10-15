@@ -161,7 +161,7 @@ helm upgrade --install ipaffs-release-explorer "${charts[0]}" \
 # Verify ingress routing and app health, with the configured DEV TLS policy.
 check_ingress
 
-# A ready process is not enough: verify that the pod can read ADO using its identity.
+# A ready process is not enough: verify ADO and configured namespace reads from the pod.
 # Emit only status/counts, never tokens, upstream responses or pipeline log contents.
 # shellcheck disable=SC2016
 kubectl --namespace "$NAMESPACE" exec deployment/ipaffs-release-explorer -- node --input-type=module -e '
@@ -188,6 +188,15 @@ kubectl --namespace "$NAMESPACE" exec deployment/ipaffs-release-explorer -- node
   if (warnings.some(w => ["environments_unavailable", "environment_history_unavailable"].includes(w.code))) {
     console.error("ADO read smoke check failed: Environment history could not be verified. The identity must be able to read Environments and the Build API.");
     process.exit(1);
+  }
+  if (dashboard.namespaceChecks?.enabled === false) {
+    console.log("Kubernetes namespace checks are explicitly disabled.");
+  } else if (dashboard.namespaceChecks?.enabled !== true || dashboard.namespaceChecks.status !== "available" ||
+      (dashboard.namespaces || []).some(namespace => !["exists", "terminating", "missing"].includes(namespace.runtime?.status))) {
+    console.error("Namespace read smoke check failed. Verify the service-account namespace get permission and API-server connectivity.");
+    process.exit(1);
+  } else {
+    console.log("Kubernetes namespace read smoke check passed.");
   }
   if (warnings.length) console.log(`History coverage has ${warnings.length} warning(s); inspect coverage in the dashboard.`);
   console.log("ADO read smoke check passed; dashboard is live.");

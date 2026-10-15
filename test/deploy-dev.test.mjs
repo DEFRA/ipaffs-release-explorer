@@ -14,11 +14,14 @@ const optionalIds = ['ADO_QA_DEV_PIPELINE_ID', 'ADO_QA_TST_PIPELINE_ID', 'ADO_SC
 const clientId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const tenantId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const issuer = 'https://example.oic.prod-aks.azure.com/example/issuer/';
+const checkedAt = '2026-10-15T10:00:00.000Z';
 const healthyDashboard = () => ({
   mode: 'live', limits: { pipelines: [
     { kind: 'dev', count: 1 }, { kind: 'create', count: 1 }, { kind: 'release', count: 1 },
     { kind: 'qa', count: 0 },
   ] }, warnings: [],
+  namespaceChecks: { enabled: true, checkedAt, status: 'available' },
+  namespaces: [{ name: 'dev', runtime: { status: 'exists', checkedAt, detail: 'Namespace exists.' } }],
 });
 
 async function fixture(t) {
@@ -162,4 +165,55 @@ test('smoke check still fails when environment access is unavailable', async t =
     assert.equal(result.code, 1, result.stderr);
     assert.match(result.stderr, /Environment history could not be verified/);
   }
+});
+
+test('namespace smoke check accepts missing and terminating namespaces as verified API results', async t => {
+  const run = await fixture(t);
+  for (const status of ['missing', 'terminating']) {
+    const dashboard = healthyDashboard();
+    dashboard.namespaces[0].runtime.status = status;
+    const result = await run({ TEST_DASHBOARD: JSON.stringify(dashboard) });
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, /Kubernetes namespace read smoke check passed/);
+    assert.match(result.stdout, /ADO read smoke check passed/);
+  }
+});
+
+test('namespace smoke check rejects unknown rows and unavailable or missing check metadata', async t => {
+  const run = await fixture(t);
+  const unknownRow = healthyDashboard();
+  unknownRow.namespaces[0].runtime = { status: 'unknown', checkedAt, detail: 'API access denied.' };
+  const missingRowState = healthyDashboard();
+  delete missingRowState.namespaces[0].runtime;
+  const missingMetadata = healthyDashboard();
+  delete missingMetadata.namespaceChecks;
+  const cases = [unknownRow, missingRowState, missingMetadata];
+  for (const status of ['partial', 'unavailable']) {
+    const dashboard = healthyDashboard();
+    dashboard.namespaceChecks.status = status;
+    cases.push(dashboard);
+  }
+  for (const dashboard of cases) {
+    const result = await run({ TEST_DASHBOARD: JSON.stringify(dashboard) });
+    assert.equal(result.code, 1, result.stderr);
+    assert.match(result.stderr, /Namespace read smoke check failed/);
+    assert.doesNotMatch(result.stdout, /ADO read smoke check passed/);
+  }
+});
+
+test('namespace smoke check permits explicitly disabled checks and verified access with no historical rows', async t => {
+  const run = await fixture(t);
+  const disabled = healthyDashboard();
+  disabled.namespaceChecks = { enabled: false, checkedAt: null, status: 'unavailable' };
+  disabled.namespaces = [{ name: 'dev' }];
+  const disabledResult = await run({ TEST_DASHBOARD: JSON.stringify(disabled) });
+  assert.equal(disabledResult.code, 0, disabledResult.stderr);
+  assert.match(disabledResult.stdout, /Kubernetes namespace checks are explicitly disabled/);
+  assert.doesNotMatch(disabledResult.stdout, /Kubernetes namespace read smoke check passed/);
+
+  const emptyHistory = healthyDashboard();
+  emptyHistory.namespaces = [];
+  const verifiedResult = await run({ TEST_DASHBOARD: JSON.stringify(emptyHistory) });
+  assert.equal(verifiedResult.code, 0, verifiedResult.stderr);
+  assert.match(verifiedResult.stdout, /Kubernetes namespace read smoke check passed/);
 });

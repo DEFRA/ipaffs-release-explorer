@@ -44,6 +44,8 @@ export function loadConfig(env = process.env) {
       throw new Error('ALLOWED_HOSTS must contain comma-separated hostnames with optional ports, without URLs or wildcards.');
     }
   }
+  const namespaceChecks = env.K8S_NAMESPACE_CHECK_ENABLED || 'false';
+  if (!['true', 'false'].includes(namespaceChecks)) throw new Error('K8S_NAMESPACE_CHECK_ENABLED must be true or false.');
   return {
     organization,
     project,
@@ -65,6 +67,7 @@ export function loadConfig(env = process.env) {
     },
     environmentNames: ['DEV', 'TST', 'PRE', 'PRD'],
     devUrls: canonicalDevUrls(env),
+    kubernetes: { namespaceChecksEnabled: namespaceChecks === 'true' },
     runsPerPipeline: integer('ADO_RUNS_PER_PIPELINE', 100, 1, 100),
     cacheSeconds: integer('ADO_CACHE_SECONDS', 90, 10, 3600),
     host,
