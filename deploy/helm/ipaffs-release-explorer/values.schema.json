@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "type": "object",
-  "required": ["replicaCount", "image", "serviceAccount", "workloadIdentity", "ado", "devUrls", "allowedHosts", "ingress", "resources"],
+  "required": ["replicaCount", "image", "serviceAccount", "workloadIdentity", "kubernetes", "ado", "devUrls", "allowedHosts", "ingress", "resources"],
   "properties": {
     "replicaCount": {"type": "integer", "minimum": 1, "maximum": 3},
     "image": {
@@ -26,6 +26,14 @@
       "properties": {
         "clientId": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"},
         "tenantId": {"type": "string", "pattern": "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"}
+      },
+      "additionalProperties": false
+    },
+    "kubernetes": {
+      "type": "object",
+      "required": ["namespaceChecksEnabled"],
+      "properties": {
+        "namespaceChecksEnabled": {"type": "boolean"}
       },
       "additionalProperties": false
     },

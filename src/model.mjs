@@ -576,7 +576,7 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
       { label: 'Release candidates', status: releases.length ? 'partial' : 'unavailable', detail: 'Candidates come from successful retained tag-creation logs. Deleted logs and tags created outside these pipelines are not covered.' },
       { label: 'DEV namespaces', status: namespaces.length ? 'partial' : 'unavailable', detail: 'Namespaces are reconstructed from successful resolver logs or explicitly marked branch inference. This is deployment history, not a live namespace inventory.' },
       { label: 'ADO Environments', status: environments.length ? 'available' : 'unavailable', detail: 'Environment records corroborate matching manifest runs only; unrelated deployments are excluded.' },
-      { label: 'Runtime health', status: 'unavailable', detail: 'This read-only ADO prototype does not query Kubernetes or establish what is currently running.' },
+      { label: 'Runtime health', status: 'unavailable', detail: 'Deployment history and namespace presence do not establish which workloads are currently running or healthy.' },
       { label: 'QA revision assurance', status: 'unavailable', detail: 'A queued or passing QA run alone does not prove it tested the exact deployed manifest commit.' },
     ],
     environments: envRows, namespaces, releases, previousReleases, runs,

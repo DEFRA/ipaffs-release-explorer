@@ -14,6 +14,7 @@ data:
   HOST: "0.0.0.0"
   PORT: "4317"
   NODE_ENV: production
+  K8S_NAMESPACE_CHECK_ENABLED: {{ .Values.kubernetes.namespaceChecksEnabled | quote }}
   ALLOWED_HOSTS: {{ concat .Values.allowedHosts $serviceHosts $ingressHosts | uniq | join "," | quote }}
   ADO_ORGANIZATION: {{ .Values.ado.organization | quote }}
   ADO_PROJECT: {{ .Values.ado.project | quote }}

@@ -22,6 +22,12 @@ values=(
 helm lint "$chart" --strict "${values[@]}"
 helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
   "${values[@]}" > "$temp_dir/rendered.yaml"
+helm template chart-validation "$chart" --namespace validation \
+  "${values[@]}" --set-string serviceAccount.name=custom-explorer \
+  > "$temp_dir/namespace-reader.yaml"
+helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
+  "${values[@]}" --set kubernetes.namespaceChecksEnabled=false \
+  > "$temp_dir/namespace-checks-disabled.yaml"
 helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
   "${values[@]}" --set ado.pipelines.scan=107 > "$temp_dir/scan-override.yaml"
 dev_url_values=(
@@ -63,6 +69,39 @@ const configValue = (yaml, name) => JSON.parse(resource(yaml, 'ConfigMap').match
 const configChecksum = yaml => resource(yaml, 'Deployment').match(/^        checksum\/config: (.+)$/m)[1];
 
 const baseline = read('rendered.yaml');
+for (const name of ['rendered.yaml', 'namespace-reader.yaml']) {
+  const yaml = read(name);
+  const role = resource(yaml, 'ClusterRole');
+  const binding = resource(yaml, 'ClusterRoleBinding');
+  const deployment = resource(yaml, 'Deployment');
+  const account = resource(yaml, 'ServiceAccount');
+  const namespace = name === 'rendered.yaml' ? 'ipaffs-release-explorer' : 'validation';
+  const release = name === 'rendered.yaml' ? 'ipaffs-release-explorer' : 'chart-validation';
+  const serviceAccount = name === 'rendered.yaml' ? 'ipaffs-release-explorer' : 'custom-explorer';
+  const roleName = `${namespace}-${release}-namespace-reader`;
+  assert.equal(configValue(yaml, 'K8S_NAMESPACE_CHECK_ENABLED'), 'true');
+  assert(role && binding, 'Enabled namespace checks require a role and binding');
+  assert.match(role.trimEnd(), /\nrules:\n  - apiGroups: \[""\]\n    resources: \["namespaces"\]\n    verbs: \["get"\]$/,
+    'Namespace access must grant only get on the core namespaces resource');
+  assert(role.includes(`\n  name: ${roleName}\n`), 'Cluster role names must include release and namespace');
+  assert(binding.includes(`\n  name: ${roleName}\n`));
+  assert(binding.includes(`\n    name: ${serviceAccount}\n    namespace: ${namespace}\n`),
+    'The binding must target only the configured service account in the release namespace');
+  assert.match(account, /\nautomountServiceAccountToken: false\n/);
+  assert.match(deployment, /\n      automountServiceAccountToken: false\n/);
+  assert.match(deployment, /mountPath: \/var\/run\/secrets\/kubernetes.io\/serviceaccount\n\s+readOnly: true/);
+  assert.match(deployment, /serviceAccountToken:\n\s+path: token\n\s+expirationSeconds: 3600/);
+  assert.match(deployment, /configMap:\n\s+name: kube-root-ca.crt\n\s+items:\n\s+- key: ca.crt\n\s+path: ca.crt/);
+  assert(!deployment.includes('audience:'), 'The API token must use the API server audience');
+}
+const namespaceChecksDisabled = read('namespace-checks-disabled.yaml');
+assert.equal(configValue(namespaceChecksDisabled, 'K8S_NAMESPACE_CHECK_ENABLED'), 'false');
+assert.equal(resource(namespaceChecksDisabled, 'ClusterRole'), undefined);
+assert.equal(resource(namespaceChecksDisabled, 'ClusterRoleBinding'), undefined);
+assert(!resource(namespaceChecksDisabled, 'Deployment').includes('kubernetes-api'),
+  'Disabled namespace checks must not mount an API token');
+assert.notEqual(configChecksum(baseline), configChecksum(namespaceChecksDisabled),
+  'Changing namespace checks must trigger a rollout');
 assert(!resource(baseline, 'ConfigMap').includes('ADO_SCAN_PIPELINE_ID:'), 'Scan discovery must work without an override');
 assert.equal(configValue(read('scan-override.yaml'), 'ADO_SCAN_PIPELINE_ID'), '107');
 for (const name of ['DEV_B2C_URL', 'DEV_B2B_URL']) {
@@ -121,6 +160,10 @@ if helm template invalid "$chart" "${values[@]}" --set-string image.digest=lates
   echo 'An invalid image digest unexpectedly passed chart validation.' >&2
   exit 1
 fi
+if helm template invalid "$chart" "${values[@]}" --set-string kubernetes.namespaceChecksEnabled=true >/dev/null 2>&1; then
+  echo 'A non-boolean namespace-check setting unexpectedly passed chart validation.' >&2
+  exit 1
+fi
 
 # Invalid ingress settings must fail before reaching Kubernetes or the application.
 expect_invalid_ingress() {
@@ -156,4 +199,4 @@ for key in b2c b2b; do
     expect_invalid_dev_urls --set-file "devUrls.${key}=$temp_dir/invalid-dev-url.txt"
   done
 done
-echo 'Chart lint, routing, TLS, host allowlist, canonical DEV links and required configuration checks passed.'
+echo 'Chart lint, namespace read permissions/token projection, routing, TLS, host allowlist, canonical DEV links and required configuration checks passed.'

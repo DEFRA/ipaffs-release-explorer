@@ -7,6 +7,15 @@ const environment = {
   ADO_RELEASE_PIPELINE_ID: '103', ADO_QA_PIPELINE_ID: '104',
 };
 
+test('Kubernetes namespace checks are opt-in outside the Helm deployment', () => {
+  assert.deepEqual(loadConfig(environment).kubernetes, { namespaceChecksEnabled: false });
+  assert.equal(loadConfig({ ...environment, K8S_NAMESPACE_CHECK_ENABLED: 'true' }).kubernetes.namespaceChecksEnabled, true);
+  assert.equal(loadConfig({ ...environment, K8S_NAMESPACE_CHECK_ENABLED: 'false' }).kubernetes.namespaceChecksEnabled, false);
+  for (const value of ['1', 'yes', 'TRUE', ' false ']) {
+    assert.throws(() => loadConfig({ ...environment, K8S_NAMESPACE_CHECK_ENABLED: value }), /K8S_NAMESPACE_CHECK_ENABLED/);
+  }
+});
+
 test('vulnerability scan discovery works without deployment configuration changes', () => {
   assert.deepEqual(loadConfig(environment).scanPipeline, { id: null, name: 'Container Vulnerability Scanning' });
   assert.equal(loadConfig({ ...environment, ADO_SCAN_PIPELINE_ID: '107' }).scanPipeline.id, 107);

@@ -19,7 +19,7 @@ const createRun = (overrides = {}) => ({
   queueTime: changedAt, startTime: changedAt, finishTime: changedAt, ...overrides,
 });
 
-function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {}, logs = {}, qaEvidence = {}, retentionPolicy, now, devUrls = null } = {}) {
+function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {}, logs = {}, qaEvidence = {}, retentionPolicy, now, devUrls = null, namespaceClient } = {}) {
   let runs = initialRuns;
   let policy = retentionPolicy;
   const failures = new Map();
@@ -72,7 +72,8 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelin
     },
   });
   return {
-    service: createDashboardService({ ...config, qaPipelines: {}, scanPipeline: null, devUrls }, client, now ? { now } : undefined), calls,
+    service: createDashboardService({ ...config, qaPipelines: {}, scanPipeline: null, devUrls,
+      kubernetes: { namespaceChecksEnabled: Boolean(namespaceClient) } }, client, { ...(now ? { now } : {}), ...(namespaceClient ? { namespaceClient } : {}) }), calls,
     setRuns(next) { runs = next; },
     setRetentionPolicy(next) { policy = next; },
     setFailure(path, status = 500) { if (path) failures.set(path, status); else failures.clear(); },
@@ -84,6 +85,40 @@ function assertOnlyApiRequests(calls) {
   assert.ok(calls.every(url => url.pathname.includes('/_apis/')));
   assert.equal(calls.some(url => url.pathname.includes('/_build/')), false);
 }
+
+test('namespace checks refresh independently of recorded deployment success and use the dashboard cache', async () => {
+  const run = createRun({ definition: { id: config.pipelines.dev, name: 'Deploy DEV' } });
+  const records = [
+    { id: 'resolver', type: 'Task', name: 'Resolve namespace', state: 'completed', result: 'succeeded', log: { id: 20 } },
+    { id: 'stage', type: 'Stage', identifier: 'DEV_DeployChart', state: 'completed', result: 'succeeded', finishTime: changedAt },
+  ];
+  const calls = [];
+  let status = 'exists';
+  const source = fixture([run], { timelines: { 501: { records } }, logs: { 20: 'Using namespace: dev\n' },
+    namespaceClient: { async check(name) {
+      calls.push(name);
+      return { status, checkedAt: changedAt, detail: 'Synthetic Kubernetes response' };
+    } } });
+  const initial = await source.service.get();
+  assert.equal(initial.namespaces[0].runtime.status, 'exists');
+  assert.equal(initial.namespaceChecks.status, 'available');
+  assert.equal(initial.namespaces[0].lastSuccess.runId, 501);
+  status = 'missing';
+  assert.equal((await source.service.get()).namespaces[0].runtime.status, 'exists', 'The existing dashboard TTL applies to cluster observations');
+  assert.deepEqual(calls, ['dev']);
+  const refreshed = await source.service.get({ refresh: true });
+  assert.equal(refreshed.namespaces[0].runtime.status, 'missing');
+  assert.equal(refreshed.namespaces[0].lastSuccess.runId, 501, 'Absence must not remove historical evidence');
+  assert.deepEqual(calls, ['dev', 'dev']);
+  status = 'unknown';
+  const failed = await source.service.get({ refresh: true });
+  assert.equal(failed.namespaces[0].runtime.status, 'unknown', 'Do not retain a stale missing or present result on failure');
+  assert.equal(failed.namespaceChecks.status, 'unavailable');
+  assert.equal(failed.warnings.some(warning => warning.code === 'namespace_checks_unavailable'), true);
+  assert.equal(failed.namespaces[0].lastSuccess.runId, 501);
+  assert.equal(failed.coverage.find(item => item.label === 'Runtime health').status, 'unavailable');
+  assertOnlyApiRequests(source.calls);
+});
 
 test('namespace launch URLs load from selected ADO task logs without fetching application destinations', async () => {
   for (const [name, stageIdentifier] of [

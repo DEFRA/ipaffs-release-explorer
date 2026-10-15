@@ -1,8 +1,9 @@
 # IPAFFS Release Explorer
 
 A read-only Node app that reconstructs release history from **existing**
-ADO run summaries, timelines, selected logs and Environment records. It needs no pipeline
-changes, database, GitHub API access or Kubernetes access.
+ADO run summaries, timelines, selected logs and Environment records. In AKS it also
+checks whether the recorded DEV namespaces still exist. It needs no changes to
+the source pipelines, database or GitHub API access.
 
 This standalone repository owns the app, its container, the ADO pipeline and its
 Helm chart. The new pipeline deploys this app only; existing IPAFFS pipelines
@@ -24,7 +25,7 @@ npm start
 
 Open <http://127.0.0.1:4317>. If you already have a working Azure CLI session,
 skip the login step. Tokens stay in server memory and are never returned to the
-browser. The server only sends GET requests to ADO; there are no queue, deploy,
+browser. History and namespace requests are read-only; there are no queue, deploy,
 approve, tag, configuration-write or other mutation routes.
 
 The page initially reads live ADO data. A connection problem stays an error;
@@ -34,9 +35,9 @@ No live log files or credentials are saved in the application directory.
 ## Data loading and refresh
 
 The browser requests dashboard JSON from the Node server. The server reads ADO,
-interprets the pipeline evidence and holds credentials and cached responses in
-memory. The browser renders those results; it does not contact ADO or receive
-credentials.
+interprets the pipeline evidence, checks recorded DEV namespace names when enabled,
+and holds credentials and cached responses in memory. The browser renders those
+results; it does not contact ADO or Kubernetes or receive credentials.
 
 Live data refreshes automatically every 3 minutes while the page is visible.
 Automatic refresh pauses in a hidden tab and catches up when the page becomes
@@ -80,6 +81,7 @@ permissions or pipeline changes are needed for this view.
 | --- | --- | --- |
 | Last recorded deployment in TST/PRE/PRD | Per-environment deployment jobs/stages in the release timeline | A successful pipeline operation is not live cluster health. |
 | DEV namespaces deployed by these pipelines | The namespace resolver's `Using namespace:` log line | Deleted or expired logs leave the namespace unknown; this is not a live inventory of namespaces. |
+| Current DEV namespace existence | Optional read-only Kubernetes API lookup of each recorded name | Existence is not workload health; a missing namespace does not reveal when or why it was deleted. |
 | DEV application launch links | Existing namespace access URL summaries in successful publishing task logs | Only recorded URLs are shown; their availability is not checked. |
 | Release candidates and effective manifest commit | Successful Create Release task logs | Tags absent from retained pipeline history cannot be enumerated without another source. |
 | Previous releases and deployment dates | Successful PRD deployment, source tag and manifest commit, plus matching per-environment timelines | Limited to retained scanned runs and attempts; missing dates are not inferred. |
@@ -104,6 +106,25 @@ This identifies who queued the original pipeline run. For a stage retry, ADO's
 build summary does not establish who initiated that retry; the details say so.
 The app uses the existing [Build API requester fields](https://learn.microsoft.com/en-us/rest/api/azure/devops/build/builds/get?view=azure-devops-rest-7.1)
 and requires no extra permissions or pipeline changes.
+
+DEV namespace existence checks are enabled by the Helm chart. The server checks
+only namespace names reconstructed from ADO, using the Kubernetes API in its own
+DEV cluster. A successful read shows that the namespace exists; a deletion
+timestamp shows that it is terminating; a `404` shows that it is currently
+missing. API permission, authentication, connectivity or certificate failures
+leave the state unknown. The DEV namespace list shows only namespaces confirmed
+to exist; terminating, missing and unknown namespaces are hidden, including when
+cluster checks are disabled. The server retains recorded deployment history.
+The check does not inspect pods, application health or the version currently
+running, and does not discover namespaces absent from the scanned ADO history.
+
+The check time is shown separately from deployment dates. Namespace results use
+the dashboard cache and refresh schedule above. A missing name alone cannot prove
+that a branch-inferred namespace ever existed, or distinguish a recreated
+namespace from the original. Local runs default to disabled; enabling
+`K8S_NAMESPACE_CHECK_ENABLED=true` requires the in-cluster API token and CA files.
+It does not use the local kubeconfig or Azure CLI Kubernetes credentials. See the
+[deployment guide](deploy/README.md#namespace-existence-checks) for the read grant.
 
 DEV runs without a reliable namespace mapping are silently omitted from the
 namespace list. For mapped namespaces, **Open B2C** and **Open B2B** use the

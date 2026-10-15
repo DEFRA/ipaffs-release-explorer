@@ -13,8 +13,9 @@ The repository contains one application and its complete delivery configuration:
 
 The Helm release, namespace and Kubernetes service account default to
 `ipaffs-release-explorer`. This namespace has its own configuration and does not
-depend on the canonical IPAFFS namespace. The app reads ADO only; it receives no
-Kubernetes API role and has no access to the TST, PRE or PRD clusters.
+depend on the canonical IPAFFS namespace. The app reads ADO and checks recorded
+DEV namespace names through the DEV cluster API. Its service account can only
+`get` namespaces; it has no access to the TST, PRE or PRD clusters.
 
 ## Existing DEV resources
 
@@ -73,19 +74,58 @@ job capacity. The pipeline installs Node, Helm, kubectl and
 kubelogin. Authorise the new pipeline to use the variable group, agent pool,
 service connection and DEV environment. Existing environment checks still apply.
 
-There are three separate identities involved:
+There are four separate identities involved:
 
 - **Pipeline service connection:** builds/pushes the image and deploys the chart.
   It needs ACR push access, permission to obtain non-admin AKS credentials and
   Kubernetes permissions to create the new namespace and manage its Helm resources.
   It also needs permission to create/update the app managed identity and federated
   credential, run resource-group ARM deployments, read the AKS configuration, and
-  create/update the app Ingress and execute the post-deployment check in the pod (`pods/exec`). The namespace-scoped
-  identity receives no Azure resource roles from this template.
+  create/update the app Ingress and execute the post-deployment check in the pod
+  (`pods/exec`). With namespace checks enabled, it must also be allowed to create,
+  update and bind the chart's limited ClusterRole and ClusterRoleBinding.
 - **AKS kubelet identity:** pulls the image from ACR. It needs `AcrPull`, or the
   appropriate repository-reader role if the registry uses repository ABAC.
 - **App managed identity:** reads ADO. It needs ADO permissions, not Azure
   Contributor, Kubernetes roles or GitHub access.
+- **App Kubernetes service account:** checks namespace existence through native
+  Kubernetes RBAC. It receives only `get` on core `namespaces`, using a separate
+  rotating API token. No Azure resource roles are added for this check.
+
+## Namespace existence checks
+
+`kubernetes.namespaceChecksEnabled` defaults to `true` in the Helm chart. This
+sets `K8S_NAMESPACE_CHECK_ENABLED=true`, creates a ClusterRole granting only
+`get` on `namespaces`, and binds it to the app service account in the release
+namespace. The ClusterRole name includes both Helm release and namespace, so
+separate app installations do not share a binding.
+
+Namespaces are cluster-scoped. Kubernetes RBAC cannot restrict dynamic namespace
+names by prefix, so this grant can read metadata for any named namespace in the
+DEV cluster. The application requests only names reconstructed from ADO, rather
+than listing the cluster. It receives no `list`, `watch`, namespace mutation,
+pod or Secret permissions. The deployment service connection needs permission
+to create and bind this grant; arrange that access before deploying.
+
+Automatic service-account token mounting stays disabled. The Deployment explicitly
+projects a one-hour API token and `kube-root-ca.crt` into the app container at
+`/var/run/secrets/kubernetes.io/serviceaccount`. Kubelet rotates the token and the
+app rereads it for namespace requests. TLS verification uses the projected CA for
+`https://kubernetes.default.svc`. The Entra exchange token for ADO remains separate.
+Allow HTTPS access to the DEV API server under any inherited network policy.
+
+The server distinguishes an existing namespace, a terminating namespace, a
+missing name (`404`), and an unknown state caused by an API failure. The dashboard
+list shows only namespaces confirmed to exist. A missing namespace does not
+establish when or why it was deleted. This is an existence
+check, not a test of workload health or the running release. Historical ADO
+deployment evidence remains available.
+
+Set `kubernetes.namespaceChecksEnabled=false` to disable these lookups and omit
+the token projection and RBAC resources. The deployment smoke check permits that
+explicit choice; when enabled, all namespace checks must complete with known
+results. An empty ADO namespace list still requires a successful API access probe.
+Local runs disable checks by default and do not use kubeconfig.
 
 ## 1. Pipeline-managed app identity
 
@@ -115,8 +155,9 @@ For the default namespace, federation is scoped to:
 system:serviceaccount:ipaffs-release-explorer:ipaffs-release-explorer
 ```
 
-The pipeline does not change the cluster or grant directory/ADO permissions.
-Helm creates the namespace when installing the app. It is also possible to preview
+The identity bootstrap does not change cluster settings or grant directory/ADO
+permissions. Helm creates the namespace and the configured read-only Kubernetes
+grant when installing the app. It is also possible to preview
 or provision the identity ahead of the pipeline: set `AKS_RESOURCE_GROUP` and
 `AKS_NAME` in your shell, sign into the correct subscription, then run:
 
@@ -211,12 +252,12 @@ overrides disabled. A run on `main`:
 4. Creates or updates the managed identity and federation and reads their IDs.
 5. Verifies cluster identity settings and federation, then installs/upgrades the
    chart in the dedicated namespace with a ten-minute readiness timeout.
-6. Checks the ingress URL (verifying certificates by default), then checks live ADO reads
-   from the running pod. A freshly provisioned identity gets
+6. Checks the ingress URL (verifying certificates by default), then checks live ADO
+   and configured DEV namespace reads from the running pod. A freshly provisioned identity gets
    a bounded retry for token-exchange propagation. An authentication or permissions
    failure must be resolved before treating the deployment as ready for use.
 
-`helm --atomic` rolls back a failed Helm upgrade. A later ingress or ADO smoke-check failure
+`helm --atomic` rolls back a failed Helm upgrade. A later ingress or data smoke-check failure
 fails the pipeline but leaves the installed revision available for diagnosis;
 it does not automatically roll back that revision.
 
