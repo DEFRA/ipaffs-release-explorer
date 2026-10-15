@@ -111,6 +111,27 @@ test('each namespace check rereads rotated service-account credentials', async (
   ]);
 });
 
+test('namespace checks return only safe lifecycle metadata for creator matching', async () => {
+  const { client } = fixture([{ status: 200, body: namespace('dev-fixture', {
+    metadata: { name: 'dev-fixture', uid: 'fixture-namespace-uid', creationTimestamp: checkedAt,
+      annotations: { 'private.example/secret': privateValue }, labels: { owner: 'not-the-creator' } },
+  }) }]);
+  const result = await client.check('dev-fixture');
+  assert.equal(result.uid, 'fixture-namespace-uid');
+  assert.equal(result.createdAt, checkedAt);
+  assert.equal(JSON.stringify(result).includes(privateValue), false);
+  assert.equal(Object.hasOwn(result, 'annotations'), false);
+  assert.equal(Object.hasOwn(result, 'labels'), false);
+
+  const invalid = fixture([{ status: 200, body: namespace('dev-fixture', {
+    metadata: { name: 'dev-fixture', uid: { secret: privateValue }, creationTimestamp: 'not-a-date' },
+  }) }]);
+  const unknownMetadata = await invalid.client.check('dev-fixture');
+  assert.equal(unknownMetadata.status, 'exists', 'Missing creator metadata must not hide an otherwise confirmed namespace');
+  assert.equal(unknownMetadata.uid, null);
+  assert.equal(unknownMetadata.createdAt, null);
+});
+
 test('namespace deletion is confirmed only by the matching Kubernetes NotFound Status', async () => {
   const { client } = fixture([{ status: 404, body: missing() }]);
   const result = await client.check('dev-fixture');

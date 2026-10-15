@@ -120,6 +120,48 @@ test('namespace checks refresh independently of recorded deployment success and 
   assertOnlyApiRequests(source.calls);
 });
 
+test('namespace creator comes from the original lifecycle-matched create log rather than the latest deployment', async () => {
+  const uid = '11111111-2222-4333-8444-555555555555';
+  const startedAt = '2035-03-15T11:59:58Z';
+  const createdAt = '2035-03-15T12:00:00Z';
+  const finishedAt = '2035-03-15T12:00:04Z';
+  const original = createRun({ definition: { id: config.pipelines.dev, name: 'Deploy DEV' }, reason: 'manual',
+    requestedBy: { displayName: 'Original creator' }, requestedFor: { displayName: 'Another beneficiary' },
+    queueTime: startedAt, startTime: startedAt, finishTime: finishedAt });
+  const latest = createRun({ id: 502, definition: original.definition, reason: 'manual',
+    requestedBy: { displayName: 'Latest deployer' }, queueTime: '2035-03-15T12:05:00Z', finishTime: '2035-03-15T12:06:00Z' });
+  const creationRecords = [
+    { id: 'configure', type: 'Stage', attempt: 1, startTime: startedAt, finishTime: finishedAt, state: 'completed', result: 'succeeded' },
+    { id: 'phase', type: 'Phase', parentId: 'configure', attempt: 1 },
+    { id: 'resolve-job', type: 'Job', parentId: 'phase', attempt: 1, state: 'completed', result: 'succeeded' },
+    { id: 'resolver', type: 'Task', parentId: 'resolve-job', name: 'Resolve namespace', attempt: 1,
+      startTime: startedAt, finishTime: finishedAt, state: 'completed', result: 'succeeded', log: { id: 20 } },
+    { id: 'deploy', type: 'Stage', identifier: 'DEV_DeployChart', state: 'completed', result: 'succeeded', finishTime: finishedAt },
+  ];
+  let currentCreation = createdAt;
+  const source = fixture([latest, original], { timelines: {
+    501: { records: creationRecords },
+    502: { records: [
+      { id: 'resolver-new', type: 'Task', name: 'Resolve namespace', state: 'completed', result: 'succeeded', log: { id: 22 } },
+      { id: 'deploy-new', type: 'Stage', identifier: 'DEV_DeployChart', state: 'completed', result: 'succeeded', finishTime: latest.finishTime },
+    ] },
+  }, logs: {
+    20: '2035-03-15T12:00:00.1234567Z namespace/dev created\n2035-03-15T12:00:01Z Using namespace: dev\n',
+    22: '2035-03-15T12:05:00Z Using namespace: dev\n',
+  }, namespaceClient: { async check() { return { status: 'exists', uid, createdAt: currentCreation, checkedAt: changedAt }; } } });
+  const initial = await source.service.get();
+  assert.equal(initial.namespaces[0].creator.status, 'recorded');
+  assert.equal(initial.namespaces[0].creator.name, 'Original creator');
+  assert.equal(initial.namespaces[0].creator.runId, 501);
+  assert.equal(initial.namespaces[0].lastSuccess.runId, 502);
+  currentCreation = '2035-03-15T12:10:00Z';
+  const recreated = await source.service.get({ refresh: true });
+  assert.equal(recreated.namespaces[0].creator.status, 'unavailable');
+  assert.equal(recreated.namespaces[0].creator.name, null);
+  assert.equal(recreated.namespaces[0].lastSuccess.runId, 502);
+  assertOnlyApiRequests(source.calls);
+});
+
 test('namespace launch URLs load from selected ADO task logs without fetching application destinations', async () => {
   for (const [name, stageIdentifier] of [
     ['Publish namespace access URLs', 'DEV_DeployChart'],
