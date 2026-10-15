@@ -57,11 +57,18 @@ export function createNamespaceClient({ readFileImpl = readFile, requestImpl = r
           return { status: 'missing', checkedAt, detail: 'Kubernetes confirms this namespace is absent. Any deployment shown here is a historical record; the deletion time is not available.' };
         }
         if (status === 200 && body?.kind === 'Namespace' && body.apiVersion === 'v1' && body.metadata?.name === name) {
+          const metadata = {
+            uid: typeof body.metadata.uid === 'string' && /^[a-zA-Z0-9-]{1,128}$/.test(body.metadata.uid) ? body.metadata.uid : null,
+            createdAt: typeof body.metadata.creationTimestamp === 'string'
+              && /^\d{4}-\d{2}-\d{2}T/.test(body.metadata.creationTimestamp)
+              && Number.isFinite(Date.parse(body.metadata.creationTimestamp))
+              ? body.metadata.creationTimestamp : null,
+          };
           if (body.metadata.deletionTimestamp || body.status?.phase === 'Terminating') {
-            return { status: 'terminating', checkedAt, detail: 'Kubernetes reports that this namespace is being deleted.' };
+            return { status: 'terminating', checkedAt, ...metadata, detail: 'Kubernetes reports that this namespace is being deleted.' };
           }
           if (body.status?.phase === 'Active') {
-            return { status: 'exists', checkedAt, detail: 'Kubernetes confirms this namespace exists. Namespace presence does not establish workload health or the currently deployed version.' };
+            return { status: 'exists', checkedAt, ...metadata, detail: 'Kubernetes confirms this namespace exists. Namespace presence does not establish workload health or the currently deployed version.' };
           }
         }
         return unknown([401, 403].includes(status)

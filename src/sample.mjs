@@ -64,12 +64,17 @@ export function sampleDashboard() {
     ],
     namespaces: [
       { name: 'dev', kind: 'canonical', branch: 'refs/heads/master', lastSuccess: dev, latestAttempt: dev,
-        runtime: { status: 'exists', checkedAt: now.toISOString(), detail: 'Sample: the DEV namespace exists in the cluster.' } },
+        creator: { status: 'recorded', name: 'Example operator', createdAt: at(168), runId: 90, url: url(90),
+          detail: 'Sample: this manual pipeline run created the namespace. Its creation log matches the current namespace creation time.',
+          evidence: [{ label: 'Sample namespace creation log', url: `${url(90)}&view=logs&l=7`, type: 'sample' }] },
+        runtime: { status: 'exists', checkedAt: now.toISOString(), createdAt: at(168), uid: '11111111-2222-4333-8444-555555555555', detail: 'Sample: the DEV namespace exists in the cluster.' } },
       { name: '4-2-x', kind: 'release', branch: 'refs/heads/RELEASE/4.2.x', lastSuccess: deploy(102, 'DEV', 'RELEASE/4.2.x', 'succeeded', 4, '4-2-x'), latestAttempt: deploy(102, 'DEV', 'RELEASE/4.2.x', 'succeeded', 4, '4-2-x'),
         runtime: { status: 'missing', checkedAt: now.toISOString(), detail: 'Sample: the cluster returned Not Found for this namespace.' } },
       { name: 'feature-cleanup', kind: 'branch', branch: 'refs/heads/feature/cleanup', lastSuccess: deploy(103, 'DEV', 'feature/cleanup', 'succeeded', 2, 'feature-cleanup'), latestAttempt: deploy(103, 'DEV', 'feature/cleanup', 'succeeded', 2, 'feature-cleanup'),
         runtime: { status: 'terminating', checkedAt: now.toISOString(), detail: 'Sample: this namespace has a deletion timestamp and is terminating.' } },
       { name: 'feature-unchecked', kind: 'branch', branch: 'refs/heads/feature/unchecked', lastSuccess: deploy(104, 'DEV', 'feature/unchecked', 'succeeded', 3, 'feature-unchecked'), latestAttempt: deploy(104, 'DEV', 'feature/unchecked', 'succeeded', 3, 'feature-unchecked'),
+        creator: { status: 'unavailable', name: null, createdAt: null, runId: null, url: null,
+          detail: 'Sample: creator attribution is unavailable because the current namespace metadata could not be checked.', evidence: [] },
         runtime: { status: 'unknown', checkedAt: now.toISOString(), detail: 'Sample: the cluster request timed out, so namespace presence is unknown.' } },
     ],
     releases: [

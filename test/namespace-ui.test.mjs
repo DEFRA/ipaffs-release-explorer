@@ -67,7 +67,8 @@ test('namespace table shows and counts only confirmed existing namespaces while 
   context.renderNamespaces();
   const table = elements.get('namespace-table').children[0];
   assert.match(table.children[0].textContent, /Type Last recorded version/);
-  assert.doesNotMatch(table.children[0].textContent, /Cluster status/);
+  assert.match(table.children[0].textContent, /Last success Creator Latest attempt/);
+  assert.doesNotMatch(table.children[0].textContent, /Cluster status|Run trigger/);
   const rows = table.children[1].children;
   assert.equal(rows.length, 5);
   assert.deepEqual(rows.map(row => row.children[0].children[0].textContent), ['dev', 'release-newer', 'release-older', 'branch-a', 'branch-z']);
@@ -79,6 +80,78 @@ test('namespace table shows and counts only confirmed existing namespaces while 
   assert.equal(JSON.stringify(data.namespaces), sourceHistory, 'filtering must not delete or mutate the source deployment history');
   assert.match(elements.get('namespace-count').textContent, /^5\b/);
   assert.match(elements.get('namespace-check-status').textContent, /Some cluster checks were unavailable/);
+});
+
+test('namespace table shows the first creator separately from newer deployment requesters', () => {
+  const data = sampleDashboard();
+  const namespace = data.namespaces[0];
+  namespace.creator = {
+    status: 'recorded', name: 'Original creator', createdAt: checkedAt, runId: 90,
+    url: 'https://dev.azure.com/example/SAMPLE/_build/results?buildId=90',
+    detail: 'The creation log matches the current namespace.', evidence: [],
+  };
+  namespace.lastSuccess.trigger = { reason: 'manual', requestedBy: 'Later deployer', requestedFor: 'Later beneficiary' };
+  namespace.latestAttempt = { ...namespace.lastSuccess, runId: 120,
+    trigger: { reason: 'manual', requestedBy: 'Latest deployer', requestedFor: 'Latest beneficiary' } };
+  const { context, elements } = renderer(data);
+  context.renderNamespaces();
+  const table = elements.get('namespace-table').children[0];
+  const creatorCell = table.children[1].children[0].children[4];
+  assert.match(creatorCell.textContent, /Original creator Created 15 Mar/);
+  assert.equal(linksIn(creatorCell).length, 0, 'creator display names are plain text');
+  assert.doesNotMatch(table.textContent, /Later deployer|Later beneficiary|Latest deployer|Latest beneficiary/);
+});
+
+test('missing or unavailable creator data never falls back to deployment requester identities', () => {
+  for (const creator of [undefined, { status: 'unavailable', name: 'Unverified person' }, { status: 'recorded', name: ' ' }, { status: 'unexpected', name: 'Unverified person' }]) {
+    const data = sampleDashboard();
+    data.namespaces[0].creator = creator;
+    data.namespaces[0].lastSuccess.trigger = { reason: 'manual', requestedBy: 'Latest requester', requestedFor: 'Requested beneficiary' };
+    const { context, elements } = renderer(data);
+    context.renderNamespaces();
+    const table = elements.get('namespace-table').children[0];
+    const creatorCell = table.children[1].children[0].children[4];
+    assert.equal(creatorCell.textContent, 'Not recorded');
+    assert.doesNotMatch(table.textContent, /Latest requester|Requested beneficiary|Unverified person/);
+  }
+});
+
+test('namespace creation drawer shows creator evidence and retains the last deployment trigger', () => {
+  const namespace = sampleDashboard().namespaces[0];
+  namespace.creator = {
+    status: 'recorded', name: 'Original creator', createdAt: checkedAt, runId: 90,
+    url: 'https://dev.azure.com/example/SAMPLE/_build/results?buildId=90',
+    detail: 'A successful creation message matches the current namespace creation time.',
+    evidence: [{ label: 'Exact namespace creation log', url: 'https://dev.azure.com/example/SAMPLE/_build/results?buildId=90&view=logs&l=7' }],
+  };
+  namespace.lastSuccess.trigger = { reason: 'manual', requestedBy: 'Later deployer', requestedFor: 'Different beneficiary' };
+  const { context, drawer } = renderer();
+  context.openNamespace(namespace);
+  assert.match(drawer.textContent, /Namespace creation Creator Original creator Created.*15 Mar 2035.*Creation run #90/);
+  assert.match(drawer.textContent, /A successful creation message matches the current namespace creation time/);
+  assert.ok(linksIn(drawer).some(link => link.textContent.includes('Exact namespace creation log')));
+  assert.ok(linksIn(drawer).some(link => link.textContent.includes('View namespace creation run in ADO')));
+  assert.match(drawer.textContent, /Last successful deployment trigger Pipeline run #101 Run trigger Manual Run requested by Later deployer Run requested for Different beneficiary/);
+});
+
+test('unavailable creator details preserve a known creation date and render plain text safely', () => {
+  const namespace = sampleDashboard().namespaces[0];
+  namespace.creator = {
+    status: 'unavailable', name: 'Unverified person', createdAt: checkedAt, runId: 90,
+    url: 'https://dev.azure.com/example/SAMPLE/_build/results?buildId=90',
+    detail: 'The original creation log is outside the retained scan.', evidence: [],
+  };
+  const { context, drawer } = renderer();
+  context.openNamespace(namespace);
+  assert.match(drawer.textContent, /Namespace creation Creator Not recorded Created.*15 Mar 2035/);
+  assert.match(drawer.textContent, /The original creation log is outside the retained scan/);
+  assert.doesNotMatch(drawer.textContent, /Unverified person|Creation run #90/);
+  assert.equal(linksIn(drawer).some(link => /buildId=90/.test(link.href)), false);
+  namespace.creator = { ...namespace.creator, status: 'recorded', name: '<img src=x onerror=alert(1)>', detail: '<script>alert(1)</script>' };
+  context.openNamespace(namespace);
+  assert.ok(drawer.textContent.includes(namespace.creator.name));
+  assert.ok(drawer.textContent.includes(namespace.creator.detail));
+  assert.equal(descendants(drawer).some(child => ['img', 'script'].includes(child.tagName)), false);
 });
 
 test('refreshing an existing namespace to unknown removes its row and closes its stale drawer', () => {
@@ -177,4 +250,9 @@ test('sample data explicitly demonstrates each namespace presence state', () => 
   assert.equal(sample.namespaceChecks.enabled, true);
   assert.equal(sample.namespaceChecks.status, 'partial');
   assert.ok(sample.namespaces.every(namespace => namespace.runtime.checkedAt));
+  assert.equal(sample.namespaces[0].creator.status, 'recorded');
+  assert.equal(sample.namespaces[0].creator.name, 'Example operator');
+  assert.equal(sample.namespaces[0].creator.createdAt, sample.namespaces[0].runtime.createdAt);
+  assert.ok(sample.namespaces[0].creator.evidence.length);
+  assert.equal(sample.namespaces.at(-1).creator.status, 'unavailable');
 });

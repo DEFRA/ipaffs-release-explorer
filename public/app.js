@@ -120,17 +120,24 @@ function runTriggerReason(trigger) {
   return labels[reason] || (reason === 'unknown' || reason === 'none' ? 'Not recorded' : `Other (${trigger.reason})`);
 }
 
-function runTriggerSummary(deployment) {
-  const cell = node('td', 'run-trigger-cell');
-  if (!deployment) return append(cell, node('span', 'cell-primary', 'Not recorded'), node('span', 'cell-secondary', 'No successful deployment'));
-  const trigger = deployment.trigger;
-  const manual = normalizedStatus(trigger?.reason) === 'manual';
-  const reason = runTriggerReason(trigger);
-  append(cell,
-    node('span', 'cell-primary', manual ? trigger?.requestedBy || 'Not recorded' : reason),
-    node('span', 'cell-secondary', manual ? reason : trigger?.requestedBy ? `Run requested by ${trigger.requestedBy}` : 'Run requester not recorded'));
-  if (Number(deployment.attempt) > 1) cell.append(node('span', 'cell-secondary', 'Original run · retry requester not recorded'));
-  return cell;
+function namespaceCreator(namespace) {
+  const creator = namespace.creator;
+  const recorded = creator?.status === 'recorded' && typeof creator.name === 'string' && creator.name.trim();
+  return {
+    name: recorded ? creator.name : 'Not recorded',
+    createdAt: creator?.createdAt || null,
+    detail: creator?.detail || 'The available evidence does not identify who first created this namespace.',
+    runId: recorded ? creator.runId : null,
+    url: recorded ? creator.url : null,
+    evidence: recorded ? creator.evidence : [],
+  };
+}
+
+function namespaceCreatorSummary(namespace) {
+  const creator = namespaceCreator(namespace);
+  return append(node('td', 'namespace-creator-cell'),
+    node('span', 'cell-primary', creator.name),
+    creator.createdAt ? node('span', 'cell-secondary', `Created ${date(creator.createdAt)}`) : null);
 }
 
 function runTriggerFields(record) {
@@ -479,7 +486,7 @@ function renderNamespaces() {
   if (!namespaces.length) return container.append(empty('No confirmed existing DEV namespaces', checks?.enabled
     ? 'No namespaces in the scanned deployment history are currently confirmed to exist. Check the cluster access status above.'
     : 'Enable cluster checks to show namespaces confirmed to exist.'));
-  const { table, body } = makeTable(['Namespace / branch', 'Type', 'Last recorded version', 'Last success', 'Run trigger', 'Latest attempt']);
+  const { table, body } = makeTable(['Namespace / branch', 'Type', 'Last recorded version', 'Last success', 'Creator', 'Latest attempt']);
   namespaces.forEach((namespace) => {
     const open = () => openNamespace(namespace);
     const row = clickableRow(open);
@@ -489,7 +496,7 @@ function renderNamespaces() {
       append(node('td'), badge(namespace.kind || 'Unknown', 'neutral')),
       append(node('td'), node('span', 'cell-primary', success ? deploymentVersion(success) : 'Not recorded'), success ? node('span', 'cell-secondary mono', shortCommit(success.commit)) : null),
       node('td', 'muted', success ? date(success.finishedAt) : 'No success found'),
-      runTriggerSummary(success),
+      namespaceCreatorSummary(namespace),
       append(node('td'), namespace.latestAttempt ? badge(recordStatus(namespace.latestAttempt)) : badge('unknown')));
     body.append(row);
   });
@@ -687,6 +694,7 @@ function openNamespace(namespace) {
   const content = showDetail('DEV NAMESPACE', namespace.name || 'Unknown namespace');
   state.namespaceDetail = namespace.name;
   const runtime = namespaceRuntime(namespace);
+  const creator = namespaceCreator(namespace);
   append(content, node('p', 'detail-summary', 'Discovered from retained ADO history. Cluster status shows namespace presence at the last check; application health and the running version are not checked.'), detailFields([
     ['Type', namespace.kind], ['Branch', cleanRef(namespace.branch)],
     ['Cluster status', node('span', `badge ${runtime.tone}`, runtime.label)],
@@ -697,6 +705,13 @@ function openNamespace(namespace) {
     ['Latest attempt', badge(recordStatus(namespace.latestAttempt))],
   ]));
   if (runtime.status === 'missing') content.append(node('p', 'drawer-note', 'Missing means the namespace was absent at the last check. This does not establish whether or when it was deleted. Historical deployment records are retained.'));
+  const creationSection = append(node('section', 'drawer-section'), node('h3', '', 'Namespace creation'), detailFields([
+    ['Creator', creator.name],
+    ['Created', creator.createdAt ? date(creator.createdAt, true) : 'Not recorded'],
+    ['Creation run', creator.runId ? `#${creator.runId}` : null],
+  ]), node('p', 'drawer-note', creator.detail));
+  if (array(creator.evidence).length || safeUrl(creator.url)) creationSection.append(evidenceLinks(creator.evidence, creator.url, 'View namespace creation run in ADO'));
+  content.append(creationSection);
   if (namespace.lastSuccess) append(content, append(node('section', 'drawer-section'),
     node('h3', '', 'Last successful deployment trigger'),
     detailFields([['Pipeline run', `#${namespace.lastSuccess.runId}`], ...runTriggerFields(namespace.lastSuccess)]),

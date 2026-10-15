@@ -4,8 +4,9 @@ import { normalizeRetentionPolicy, inferQaRetention } from './retention.mjs';
 import { normalizeTestSummary } from './qa-summary.mjs';
 import { createVulnerabilityService } from './vulnerability.mjs';
 import { createNamespaceClient, attachNamespaceChecks } from './kubernetes.mjs';
+import { attachNamespaceCreators } from './namespace-creator.mjs';
 
-const INTERESTING_LOG = /Resolve namespace|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline|Publish namespace access URLs|Generate namespace URLs/i;
+const INTERESTING_LOG = /Resolve namespace|^Create namespace$|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline|Publish namespace access URLs|Generate namespace URLs/i;
 
 export function createDashboardService(config, client, { now = Date.now, namespaceClient = createNamespaceClient({ now }) } = {}) {
   let cached;
@@ -174,6 +175,7 @@ export function createDashboardService(config, client, { now = Date.now, namespa
     const dashboard = buildDashboard({ ...dashboardInput, qaSummaries });
     await vulnerabilities.attach(dashboard, builds);
     await attachNamespaceChecks(dashboard, { enabled: config.kubernetes?.namespaceChecksEnabled === true, client: namespaceClient, now });
+    attachNamespaceCreators(dashboard, { details, devRunIds: new Set(builds.filter(build => build._kind === 'dev').map(build => Number(build.id))) });
     limits.apiRequests = client.requests - callsBefore;
     lastDetails = details;
     lastBuilds = builds;
