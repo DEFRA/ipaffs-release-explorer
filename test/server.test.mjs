@@ -107,7 +107,7 @@ test('external document links load the static dashboard before same-origin asset
     assert.equal(reads, 0, 'opening the static shell must not read deployment data');
   }
 
-  for (const [path, mode, destination] of [['/app.js', 'no-cors', 'script'], ['/styles.css', 'no-cors', 'style']]) {
+  for (const [path, mode, destination] of [['/app.js', 'no-cors', 'script'], ['/styles.css', 'no-cors', 'style'], ['/favicon.svg', 'no-cors', 'image']]) {
     const asset = await sendRequest(`${base}${path}`, { headers: {
       Host: navigationHeaders.Host,
       'Sec-Fetch-Site': 'same-origin',
@@ -115,6 +115,7 @@ test('external document links load the static dashboard before same-origin asset
       'Sec-Fetch-Dest': destination,
     } });
     assert.equal(asset.status, 200);
+    if (path === '/favicon.svg') assert.equal(asset.headers['content-type'], 'image/svg+xml');
   }
   assert.equal(reads, 0);
   const dashboard = await sendRequest(`${base}/api/dashboard`, { headers: {
