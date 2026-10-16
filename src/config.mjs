@@ -63,7 +63,7 @@ export function loadConfig(env = process.env) {
     },
     scanPipeline: {
       id: env.ADO_SCAN_PIPELINE_ID ? integer('ADO_SCAN_PIPELINE_ID') : null,
-      name: 'Container Vulnerability Scanning',
+      name: 'Scan Manifest Images for Vulnerabilities',
     },
     environmentNames: ['DEV', 'TST', 'PRE', 'PRD'],
     devUrls: canonicalDevUrls(env),

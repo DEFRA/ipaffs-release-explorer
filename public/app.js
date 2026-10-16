@@ -385,8 +385,11 @@ function vulnerabilityPresentation(scan) {
     ? scan.counts : null;
   if (!counts) return { status: scanState === 'complete' ? 'Unavailable' : status, tone, label, counts: null };
   const count = value => new Intl.NumberFormat('en-GB').format(value);
+  const distinct = scan.distinct && ['critical', 'high'].every(severity => Number.isSafeInteger(scan.distinct[severity])
+    && scan.distinct[severity] >= 0 && scan.distinct[severity] <= counts[severity]) ? scan.distinct : null;
   return {
     status, counts,
+    distinct: distinct && `${count(distinct.critical)} critical · ${count(distinct.high)} high distinct CVEs`,
     tone: counts.critical || counts.high ? 'danger' : scanState === 'partial' || counts.medium || counts.low || counts.unknown ? 'warning' : 'success',
     label: `${count(counts.critical)} critical · ${count(counts.high)} high`,
     detail: `${count(counts.medium)} medium · ${count(counts.low)} low · ${count(counts.unknown)} unknown severity`,
@@ -408,6 +411,11 @@ function vulnerabilitySummary(scan, { compact = false, release = false } = {}) {
   const main = append(node('div', 'vulnerability-main'),
     heading,
     node('p', `vulnerability-metric vulnerability-${presentation.tone}`, presentation.label));
+  if (presentation.distinct) {
+    const distinct = node('p', 'vulnerability-distinct', presentation.distinct);
+    distinct.title = 'Each vulnerability ID is counted once, however many images or packages it affects.';
+    main.append(distinct);
+  }
   if (!slim && presentation.detail) main.append(node('p', 'vulnerability-counts', presentation.detail));
   const evidence = node('div', 'vulnerability-evidence');
   const images = scan?.images;

@@ -15,21 +15,24 @@ export function sampleDashboard() {
       executed: counts.passed + counts.failed + counts.other, passPercentage: 100 * counts.passed / (counts.passed + counts.failed + counts.other) } : null,
   });
   const linkedQa = (...runs) => ({ state: 'linked', latest: runs[0], runs });
-  const vulnerability = (id, state, hours, counts = null, images = null) => ({
-    state, counts, images, scannedAt: ['complete', 'partial'].includes(state) ? at(hours) : null,
+  const vulnerability = (id, state, hours, counts = null, images = null, distinct = null) => ({
+    state, counts, distinct, images, scannedAt: ['complete', 'partial'].includes(state) ? at(hours) : null,
     runId: id, url: id ? `${url(id)}&view=results` : null,
     detail: 'Illustrative registry image scan for this manifest commit, covering references from all environments.',
   });
   const currentScan = vulnerability(401, 'complete', 0.5,
-    { critical: 2, high: 18, medium: 83, low: 24, unknown: 1 }, { total: 12, scanned: 12, failed: 0 });
+    { critical: 2, high: 18, medium: 83, low: 24, unknown: 1 }, { total: 12, scanned: 12, failed: 0 },
+    { critical: 1, high: 7, medium: 31, low: 12, unknown: 1 });
   const masterScan = {
     ...vulnerability(405, 'complete', 0.1,
-      { critical: 1, high: 12, medium: 70, low: 20, unknown: 0 }, { total: 12, scanned: 12, failed: 0 }),
+      { critical: 1, high: 12, medium: 70, low: 20, unknown: 0 }, { total: 12, scanned: 12, failed: 0 },
+      { critical: 1, high: 5, medium: 28, low: 10, unknown: 0 }),
     matchedBy: 'assumed-master', sourceRef: 'refs/heads/master', sourceCommit: 'e'.repeat(40),
     detail: 'Illustrative latest master scan, used for current DEV under the assumption that DEV follows master.',
   };
   const previousScan = vulnerability(402, 'partial', 118,
-    { critical: 0, high: 0, medium: 21, low: 5, unknown: 0 }, { total: 10, scanned: 8, failed: 2 });
+    { critical: 0, high: 0, medium: 21, low: 5, unknown: 0 }, { total: 10, scanned: 8, failed: 2 },
+    { critical: 0, high: 0, medium: 9, low: 3, unknown: 0 });
   const failedScan = vulnerability(403, 'failed', 140);
   const deploy = (id, environment, version, status, hours, namespace = environment.toLowerCase()) => ({
     runId: id, environment, namespace, version, status, commit: 'a'.repeat(40), attempt: 1,
