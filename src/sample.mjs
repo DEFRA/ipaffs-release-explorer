@@ -1,3 +1,5 @@
+import { attachReleaseComparisons } from './release-comparison.mjs';
+
 // Deliberate demonstration data, used only after an explicit sample-mode request.
 export function sampleDashboard() {
   const organization = 'https://dev.azure.com/example';
@@ -42,6 +44,10 @@ export function sampleDashboard() {
   });
   const tst = deploy(100, 'TST', '4.2.0', 'succeeded', 24);
   const pre = deploy(100, 'PRE', '4.2.0', 'succeeded', 12);
+  for (const deployment of [tst, pre]) {
+    deployment.versionKind = 'release-tag';
+    deployment.sourceRef = `refs/tags/${deployment.version}`;
+  }
   const dev = deploy(101, 'DEV', 'master', 'succeeded', 1);
   for (const deployment of [dev, tst, pre]) deployment.vulnerability = currentScan;
   dev.qa = linkedQa(qaRun(301, 'DEV', 'succeeded', 0.3, { passed: 374, failed: 0, skipped: 18, other: 0 }));
@@ -159,5 +165,7 @@ export function sampleDashboard() {
     qaRun(303, 'TST', null, 0.1),
     qaRun(304, 'TST', 'succeeded', 129, { passed: 376, failed: 0, skipped: 16, other: 0 }),
   );
+  attachReleaseComparisons(dashboard.releases, dashboard.environments, [],
+    dashboard.previousReleases.flatMap(release => release.progress.flatMap(progress => progress.deployments)));
   return dashboard;
 }

@@ -783,3 +783,175 @@ test('later approval failures cannot block earlier environments', () => {
   assert.equal(progress(data, 'TST').status, 'not-started');
   assert.equal(progress(data, 'PRE').status, 'not-started');
 });
+
+const githubComparison = (base, head = '4.2.0') => `https://github.com/DEFRA/ipaffs-manifest/compare/tags/${base}...tags/${head}`;
+
+test('release comparisons use independent TST and PRE baselines without requiring any PRD history', () => {
+  const data = candidateModel([
+    build(1, { sourceBranch: 'refs/tags/4.1.9', sourceVersion: otherSha }),
+    build(2, { sourceBranch: 'refs/tags/4.0.2', sourceVersion: 'c'.repeat(40) }),
+  ], [
+    [1, detail(chartTimeline('TST'))],
+    [2, detail(chartTimeline('PRE'))],
+  ]);
+  assert.deepEqual(data.previousReleases, []);
+  assert.equal(progress(data, 'TST').comparison.url, githubComparison('4.1.9'));
+  assert.equal(progress(data, 'PRE').comparison.url, githubComparison('4.0.2'));
+  assert.equal(progress(data, 'PRD').comparison.url, null);
+});
+
+test('release comparison baselines follow successful deployment completion through rollback and failed retries', () => {
+  const data = candidateModel([
+    build(1, { sourceBranch: 'refs/tags/5.0.0', sourceVersion: otherSha, queueTime: at(7) }),
+    build(2, { sourceBranch: 'refs/tags/4.1.2', sourceVersion: 'c'.repeat(40), queueTime: at(6) }),
+    build(3, { queueTime: at(10) }),
+    build(4, { result: 'failed', queueTime: at(13) }),
+  ], [
+    [1, detail(chartTimeline('TST', { startTime: at(8), finishTime: at(10) }))],
+    [2, detail(chartTimeline('TST', { startTime: at(9), finishTime: at(12) }))],
+    [3, detail(chartTimeline('TST', { startTime: at(10), finishTime: at(11) }))],
+    [4, detail(chartTimeline('TST', { result: 'failed', startTime: at(14), finishTime: at(14) }, { result: 'failed' }))],
+  ]);
+  assert.equal(env(data, 'TST').lastSuccess.version, '4.1.2');
+  assert.equal(env(data, 'TST').latestAttempt.runId, 4);
+  assert.equal(progress(data, 'TST').status, 'failed');
+  assert.equal(progress(data, 'TST').comparison.url, githubComparison('4.1.2'));
+});
+
+test('current-series deployment history is skipped to find the last different major/minor release', () => {
+  const data = candidateModel([
+    build(1, { sourceBranch: 'refs/tags/4.1.9', sourceVersion: otherSha }),
+    build(2, { sourceBranch: 'refs/tags/4.2.1', sourceVersion: 'c'.repeat(40) }),
+    build(3, { sourceBranch: 'refs/tags/4.2.9', sourceVersion: 'd'.repeat(40) }),
+  ], [
+    [1, detail(chartTimeline('TST', { startTime: at(9), finishTime: at(9) }))],
+    [2, detail(chartTimeline('TST', { startTime: at(11), finishTime: at(11) }))],
+    [3, detail(chartTimeline('TST', { startTime: at(13), finishTime: at(13) }))],
+  ]);
+  assert.equal(env(data, 'TST').lastSuccess.version, '4.2.9');
+  assert.equal(progress(data, 'TST').comparison.url, githubComparison('4.1.9'));
+});
+
+test('only current-series deployment evidence leaves comparison unavailable for that environment', () => {
+  const data = candidateModel([
+    build(1),
+    build(2, { sourceBranch: 'refs/tags/4.2.1', sourceVersion: otherSha }),
+  ], [
+    [1, detail(chartTimeline('TST', { startTime: at(9), finishTime: at(9) }))],
+    [2, detail(chartTimeline('TST', { startTime: at(11), finishTime: at(11) }))],
+  ]);
+  assert.equal(progress(data, 'TST').comparison.url, null);
+  assert.equal(progress(data, 'TST').comparison.detail, 'No successful deployment from a different release series recorded.');
+});
+
+test('an older candidate can compare from a newer deployed tag without reversing the requested direction', () => {
+  const data = candidateModel([build(1, { sourceBranch: 'refs/tags/5.0.0', sourceVersion: otherSha })], [
+    [1, detail(chartTimeline('PRD'))],
+  ]);
+  assert.equal(progress(data, 'PRD').comparison.url, githubComparison('5.0.0'));
+  assert.equal(progress(data, 'PRD').comparison.baseVersion, '5.0.0');
+  assert.equal(progress(data, 'PRD').comparison.headVersion, '4.2.0');
+});
+
+test('DEV comparison searches canonical history beyond the current series and excludes newer feature namespaces', () => {
+  const data = candidateModel([
+    build(1, { sourceBranch: 'refs/tags/4.1.9', sourceVersion: otherSha }),
+    devBuild(2, { sourceVersion: otherSha, queueTime: at(8) }),
+    devBuild(3, { queueTime: at(10) }),
+    devBuild(4, { sourceBranch: 'refs/heads/feature/example', queueTime: at(12) }),
+  ], [
+    [1, detail(chartTimeline('TST'))],
+    [2, detail([...chartTimeline('DEV', { startTime: at(9), finishTime: at(9) }), resolverRecord()], [{ id: 27, text: 'Using namespace: dev\n' }])],
+    [3, detail([...chartTimeline('DEV', { startTime: at(11), finishTime: at(11) }), resolverRecord()], [{ id: 27, text: 'Using namespace: dev\n' }])],
+    [4, detail([...chartTimeline('DEV', { startTime: at(13), finishTime: at(13) }), resolverRecord()], [{ id: 27, text: 'Using namespace: feature-example\n' }])],
+  ]);
+  assert.equal(progress(data, 'DEV').lastSuccess.namespace, 'feature-example');
+  assert.equal(env(data, 'DEV').lastSuccess.namespace, 'dev');
+  assert.equal(env(data, 'DEV').lastSuccess.commit, sha);
+  assert.equal(progress(data, 'DEV').comparison.url, githubComparison('4.1.9'));
+  assert.equal(progress(data, 'DEV').comparison.matchedBy, 'commit');
+});
+
+test('DEV cannot infer a release tag from bare refs, release branches or build numbers', () => {
+  for (const sourceBranch of ['4.1.9', 'refs/heads/4.1.9', 'refs/heads/RELEASE/4.1.x']) {
+    const data = candidateModel([
+      build(1, { sourceBranch, sourceVersion: otherSha, buildNumber: '4.1.9' }),
+      devBuild(2, { sourceVersion: otherSha, buildNumber: '4.1.9' }),
+    ], [
+      [1, detail(chartTimeline('TST'))],
+      [2, detail([...chartTimeline('DEV'), resolverRecord()], [{ id: 27, text: 'Using namespace: dev\n' }])],
+    ]);
+    assert.equal(progress(data, 'DEV').comparison.url, null, sourceBranch);
+  }
+});
+
+test('DEV comparisons reject multiple recorded tags on the same canonical deployment commit', () => {
+  const data = candidateModel([
+    build(1, { sourceBranch: 'refs/tags/4.1.9', sourceVersion: otherSha }),
+    build(2, { sourceBranch: 'refs/tags/4.1.10', sourceVersion: otherSha }),
+    devBuild(3, { sourceVersion: otherSha }),
+  ], [
+    [1, detail(chartTimeline('TST'))],
+    [2, detail(chartTimeline('PRE'))],
+    [3, detail([...chartTimeline('DEV'), resolverRecord()], [{ id: 27, text: 'Using namespace: dev\n' }])],
+  ]);
+  assert.equal(progress(data, 'DEV').comparison.url, null);
+  assert.match(progress(data, 'DEV').comparison.detail, /recorded|identity/);
+});
+
+test('recorded conflicting release tags suppress comparisons even without PRD history', () => {
+  const data = candidateModel([
+    build(1, { sourceBranch: 'refs/tags/4.1.9', sourceVersion: otherSha }),
+    build(2, { sourceBranch: 'refs/tags/4.1.9', sourceVersion: 'c'.repeat(40), result: 'failed' }),
+  ], [
+    [1, detail(chartTimeline('TST'))],
+    [2, detail(chartTimeline('TST', { result: 'failed' }, { result: 'failed' }))],
+  ]);
+  assert.deepEqual(data.previousReleases, []);
+  assert.equal(progress(data, 'TST').comparison.url, null);
+  assert.match(progress(data, 'TST').comparison.detail, /Conflicting commits/);
+});
+
+test('bare version refs cannot manufacture a conflict with a recorded candidate tag', () => {
+  const data = candidateModel([
+    build(1, { sourceBranch: 'refs/tags/4.1.9', sourceVersion: otherSha }),
+    build(2, { sourceBranch: '4.2.0', sourceVersion: otherSha }),
+  ], [
+    [1, detail(chartTimeline('TST'))],
+    [2, detail([])],
+  ]);
+  assert.equal(progress(data, 'TST').comparison.url, githubComparison('4.1.9'));
+});
+
+test('unreliable newer tag commits block comparison history except when the tag is known to be in the current series', () => {
+  for (const [version, expectedUrl] of [['4.0.2', null], ['4.2.1', githubComparison('4.1.9')]]) {
+    const data = candidateModel([
+      build(1, { sourceBranch: 'refs/tags/4.1.9', sourceVersion: otherSha }),
+      build(2, { sourceBranch: `refs/tags/${version}`, sourceVersion: sha.slice(0, 7) }),
+    ], [
+      [1, detail(chartTimeline('TST', { startTime: at(9), finishTime: at(9) }))],
+      [2, detail(chartTimeline('TST', { startTime: at(11), finishTime: at(11) }))],
+    ]);
+    assert.equal(progress(data, 'TST').comparison.url, expectedUrl, version);
+    if (!expectedUrl) assert.equal(progress(data, 'TST').comparison.detail, 'A newer successful deployment has no reliable release tag identity.');
+  }
+});
+
+test('ambiguous newer canonical DEV history cannot fall back to an older uniquely tagged deployment', () => {
+  const ambiguousSha = 'c'.repeat(40);
+  const data = candidateModel([
+    build(1, { sourceBranch: 'refs/tags/4.1.9', sourceVersion: otherSha }),
+    build(2, { sourceBranch: 'refs/tags/4.0.2', sourceVersion: ambiguousSha }),
+    build(3, { sourceBranch: 'refs/tags/4.0.3', sourceVersion: ambiguousSha }),
+    devBuild(4, { sourceVersion: otherSha }),
+    devBuild(5, { sourceVersion: ambiguousSha }),
+  ], [
+    [1, detail(chartTimeline('TST'))],
+    [2, detail(chartTimeline('TST'))],
+    [3, detail(chartTimeline('PRE'))],
+    [4, detail([...chartTimeline('DEV', { startTime: at(9), finishTime: at(9) }), resolverRecord()], [{ id: 27, text: 'Using namespace: dev\n' }])],
+    [5, detail([...chartTimeline('DEV', { startTime: at(11), finishTime: at(11) }), resolverRecord()], [{ id: 27, text: 'Using namespace: dev\n' }])],
+  ]);
+  assert.equal(progress(data, 'DEV').comparison.url, null);
+  assert.equal(progress(data, 'DEV').comparison.detail, 'A newer successful deployment has no reliable release tag identity.');
+});

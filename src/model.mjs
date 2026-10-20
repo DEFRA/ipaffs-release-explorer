@@ -1,4 +1,5 @@
 import { parseNamespaceUrls } from './namespace-urls.mjs';
+import { attachReleaseComparisons } from './release-comparison.mjs';
 
 const VERSION = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)';
 const SHA = '(?:[a-fA-F0-9]{64}|[a-fA-F0-9]{40})';
@@ -554,6 +555,12 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
   for (const release of releases) release.progress = candidateProgress(release, runs, allDeployments, getDetail, runsById, kindById);
   const previousReleases = previousReleaseHistory(runs, allDeployments, runsById, kindById);
   const envRows = CANONICAL.map(name => ({ name, namespace: name.toLowerCase(), ...lastStates(allDeployments.filter(item => item.environment === name && item.namespace === name.toLowerCase()), runsById) }));
+  attachReleaseComparisons(releases, envRows, [
+    ...releaseCandidates,
+    ...runs.filter(run => kindById.get(run.id) === 'release' && taggedVersion(run.sourceRef)
+      && run.sourceRef === `refs/tags/${taggedVersion(run.sourceRef)}`)
+      .map(run => ({ version: taggedVersion(run.sourceRef), commit: run.commit })),
+  ], allDeployments);
   const canonicalAccess = devUrls ? { source: 'configured', links: [
     { kind: 'b2c-base', label: 'B2C', url: devUrls.b2c },
     { kind: 'b2b-base', label: 'B2B', url: devUrls.b2b },
