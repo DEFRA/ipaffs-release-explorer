@@ -31,6 +31,7 @@
       <div class="tabs" role="tablist" aria-label="Release explorer views">
         <button id="tab-overview" role="tab" aria-selected="true" aria-controls="panel-overview" data-tab="overview">Overview</button>
         <button id="tab-releases" role="tab" aria-selected="false" aria-controls="panel-releases" tabindex="-1" data-tab="releases">Releases <span id="release-count" class="count">0</span></button>
+        <button id="tab-delivery" role="tab" aria-selected="false" aria-controls="panel-delivery" tabindex="-1" data-tab="delivery">Delivery</button>
       </div>
       <section id="panel-overview" role="tabpanel" aria-labelledby="tab-overview">
         <div class="section-heading"><div><h2>Environments</h2><p>Last successful deployment recorded by ADO. Cluster health is not observed.</p></div><span class="section-label">DEV → TST → PRE → PRD</span></div>
@@ -46,6 +47,10 @@
           <div class="section-heading"><div><h2 id="previous-releases-heading">Previous releases</h2><p>Releases with a successful PRD deployment, newest deployment first. Dates show the latest successful deployment to each environment; select an environment to see all recorded deployments.</p></div></div><div id="previous-release-list" class="release-list"></div>
           <p class="release-history-note">History is limited to the ADO records available in this scan. Deployment records do not confirm current cluster state.</p>
         </section>
+      </section>
+      <section id="panel-delivery" role="tabpanel" aria-labelledby="tab-delivery" hidden>
+        <div class="section-heading"><div><h2>Delivery metrics</h2><p>DORA-style measures reconstructed from the scanned pipeline runs. They describe pipeline outcomes, not production incidents.</p></div><div id="delivery-window" class="segmented" role="group" aria-label="Delivery period"></div></div>
+        <div id="delivery-content"></div>
       </section>
       <footer class="page-footer"><span>Existing ADO records · No pipeline changes · No database</span><span id="scan-window"></span></footer>
     </div>

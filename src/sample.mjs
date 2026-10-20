@@ -1,4 +1,5 @@
 import { attachReleaseComparisons } from './release-comparison.mjs';
+import { deliveryMetrics } from './delivery.mjs';
 
 // Deliberate demonstration data, used only after an explicit sample-mode request.
 export function sampleDashboard() {
@@ -167,5 +168,33 @@ export function sampleDashboard() {
   );
   attachReleaseComparisons(dashboard.releases, dashboard.environments, [],
     dashboard.previousReleases.flatMap(release => release.progress.flatMap(progress => progress.deployments)));
+  // A longer illustrative history so each delivery measure has values.
+  const record = (id, environment, version, status, hours, commit, attemptNumber = 1) => ({
+    runId: id, environment, namespace: environment.toLowerCase(), version, status, commit, attempt: attemptNumber,
+    versionKind: environment === 'DEV' ? 'build-number' : 'release-tag', sourceRef: environment === 'DEV' ? 'refs/heads/master' : `refs/tags/${version}`,
+    startedAt: at(hours + 0.2), finishedAt: at(hours), url: url(id),
+  });
+  const history = [
+    ['4.0.0', '1', 60, 1900, [['TST', 1890], ['PRE', 1870], ['PRD', 1850]]],
+    ['4.0.1', '2', 61, 1500, [['TST', 1495], ['PRE', 1480], ['PRD', 1460, 'failed'], ['PRD', 1456, 'succeeded', 2]]],
+    ['4.1.0', '3', 62, 900, [['TST', 880, 'failed'], ['TST', 878, 'succeeded', 2], ['PRE', 860], ['PRD', 820]]],
+    ['4.1.1', '4', 63, 400, [['TST', 390], ['PRE', 380], ['PRD', 300]]],
+    ['4.1.0', '3', 64, null, [['PRD', 296]]],
+    ['4.1.2', 'c', 98, 160, [['TST', 152], ['PRE', 148], ['PRD', 144]]],
+    ['4.1.3', 'b', 97, 135, [['TST', 130], ['PRE', 129], ['PRD', 128]]],
+    ['4.1.3', 'b', 99, null, [['PRD', 120.4, 'failed'], ['PRD', 120, 'succeeded', 2]]],
+    ['4.2.0', 'a', 100, 25, [['TST', 24], ['PRE', 12]]],
+  ];
+  const deliveryDeployments = history.flatMap(([version, digit, id, , steps]) => steps.map(([environment, hours, status = 'succeeded', attemptNumber]) =>
+    record(id, environment, version, status, hours, digit.repeat(40), attemptNumber)));
+  for (let hours = 2, id = 500; hours < 1950; hours += 46, id += 1) {
+    deliveryDeployments.push(record(id, 'DEV', `sample-${id}`, id % 9 === 4 ? 'failed' : 'succeeded', hours, 'e'.repeat(40)));
+  }
+  dashboard.delivery = deliveryMetrics({
+    deployments: deliveryDeployments, now: now.getTime(), coverageStart: at(1950),
+    releases: history.filter(([, , , created]) => created !== null).map(([version, digit, id, created]) => ({
+      version, commit: digit.repeat(40), outcome: 'created', observedAt: at(created), runId: id, url: url(id), evidence: evidence(id),
+    })),
+  });
   return dashboard;
 }

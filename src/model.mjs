@@ -1,5 +1,6 @@
 import { parseNamespaceUrls } from './namespace-urls.mjs';
 import { attachReleaseComparisons } from './release-comparison.mjs';
+import { deliveryMetrics } from './delivery.mjs';
 
 const VERSION = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)';
 const SHA = '(?:[a-fA-F0-9]{64}|[a-fA-F0-9]{40})';
@@ -561,6 +562,10 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
       && run.sourceRef === `refs/tags/${taggedVersion(run.sourceRef)}`)
       .map(run => ({ version: taggedVersion(run.sourceRef), commit: run.commit })),
   ], allDeployments);
+  // Release runs bound how far back PRD history reaches in this scan.
+  const releaseQueued = runs.filter(run => kindById.get(run.id) === 'release').map(run => time(run.queuedAt)).filter(Boolean);
+  const delivery = deliveryMetrics({ deployments: allDeployments, releases, now: time(fetchedAt) || Date.now(),
+    coverageStart: releaseQueued.length ? new Date(Math.min(...releaseQueued)).toISOString() : null });
   const canonicalAccess = devUrls ? { source: 'configured', links: [
     { kind: 'b2c-base', label: 'B2C', url: devUrls.b2c },
     { kind: 'b2b-base', label: 'B2B', url: devUrls.b2b },
@@ -586,6 +591,6 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
       { label: 'Runtime health', status: 'unavailable', detail: 'Deployment history and namespace presence do not establish which workloads are currently running or healthy.' },
       { label: 'QA revision assurance', status: 'unavailable', detail: 'A queued or passing QA run alone does not prove it tested the exact deployed manifest commit.' },
     ],
-    environments: envRows, namespaces, releases, previousReleases, runs,
+    environments: envRows, namespaces, releases, previousReleases, delivery, runs,
   };
 }

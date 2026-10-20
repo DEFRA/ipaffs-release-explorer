@@ -2,7 +2,7 @@
 
 const $ = (id) => document.getElementById(id);
 const AUTO_REFRESH_MS = 3 * 60 * 1000;
-const state = { data: null, mode: 'live', tab: 'overview', loading: false, request: 0, detailRequest: 0, namespaceDetail: null, lastRefreshAt: 0 };
+const state = { data: null, mode: 'live', tab: 'overview', loading: false, request: 0, detailRequest: 0, namespaceDetail: null, lastRefreshAt: 0, deliveryWindow: 30 };
 let autoRefreshTimer;
 const array = (value) => Array.isArray(value) ? value : [];
 
@@ -354,6 +354,7 @@ function renderDashboard() {
   renderNamespaces();
   renderCoverage();
   renderReleases();
+  renderDelivery();
   $('scan-window').textContent = scanDescription(data.limits, array(data.runs).length);
 }
 
@@ -690,6 +691,117 @@ function releaseProgress(release) {
     list.append(append(node('li'), control));
   });
   return append(node('div', 'release-progress-summary'), list, groupedReleaseComparisons(entries));
+}
+
+function duration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return 'Not recorded';
+  const minutes = Math.round(ms / 60000);
+  if (minutes < 1) return 'Under 1m';
+  const days = Math.floor(minutes / 1440), hours = Math.floor((minutes % 1440) / 60), rest = minutes % 60;
+  if (days) return hours ? `${days}d ${hours}h` : `${days}d`;
+  return hours ? (rest ? `${hours}h ${rest}m` : `${hours}h`) : `${rest}m`;
+}
+
+function percentage(rate) {
+  return Number.isFinite(rate) ? `${new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 }).format(rate * 100)}%` : 'No attempts';
+}
+
+function plural(count, word) { return `${count} ${word}${count === 1 ? '' : 's'}`; }
+
+function deliveryMetric(label, value, summary, definition) {
+  return append(node('article', 'delivery-metric'), node('h3', 'delivery-metric-label', label),
+    node('p', 'delivery-metric-value', value), node('p', 'delivery-metric-summary', summary), node('p', 'delivery-metric-definition', definition));
+}
+
+function deliveryTime(reference) {
+  if (!reference?.at) return node('span', 'muted', 'Not recorded');
+  const label = date(reference.at);
+  const element = reference.url ? externalLink(`${label} ↗`, reference.url) : node('span', '', label);
+  element.title = `${date(reference.at, true)}${reference.runId ? ` · Run #${reference.runId}${reference.attempt > 1 ? `, attempt ${reference.attempt}` : ''}` : ''}`;
+  return element;
+}
+
+function deliveryTable(title, description, headings, rows, emptyTitle, emptyText) {
+  const section = append(node('section', 'surface delivery-section'), append(node('div', 'surface-heading'), append(node('div'), node('h2', '', title), node('p', '', description))));
+  const wrap = node('div', 'table-wrap');
+  if (!rows.length) wrap.append(empty(emptyTitle, emptyText));
+  else {
+    const { table, body } = makeTable(headings);
+    rows.forEach((cells) => body.append(append(node('tr'), ...cells.map((cell) => cell instanceof Node && String(cell.tagName).toLowerCase() === 'td' ? cell : append(node('td'), cell instanceof Node ? cell : document.createTextNode(String(cell)))))));
+    wrap.append(table);
+  }
+  section.append(wrap);
+  return section;
+}
+
+function renderDelivery() {
+  const delivery = state.data.delivery;
+  const windows = array(delivery?.windows);
+  const controls = $('delivery-window');
+  const container = $('delivery-content');
+  controls.replaceChildren();
+  container.replaceChildren();
+  if (!windows.length) {
+    container.append(append(node('div', 'surface'), empty('Delivery metrics unavailable', 'This scan did not provide deployment history for delivery measures.')));
+    return;
+  }
+  const period = windows.find((item) => item.days === state.deliveryWindow) || windows[0];
+  windows.forEach((item) => {
+    const control = button(`${item.days} days`, `segment${item === period ? ' active' : ''}`, () => { state.deliveryWindow = item.days; renderDelivery(); });
+    control.setAttribute('aria-pressed', String(item === period));
+    controls.append(control);
+  });
+  const from = Date.parse(period.from);
+  const within = (reference) => Date.parse(reference?.at) >= from;
+
+  const coverage = !period.coveredFrom
+    ? 'No release runs are present in this scan, so PRD history is unavailable for this period.'
+    : period.partial
+      ? `Scanned release history starts ${date(period.coveredFrom, true)}, so this period covers ${period.coveredDays} of ${period.days} days. Older runs are outside the scan.`
+      : `The scanned release history covers the full ${period.days} days.`;
+  container.append(node('p', `delivery-coverage${period.partial ? ' partial' : ''}`, coverage));
+
+  const prd = period.prd, lead = period.leadTime, failure = period.failureRate, recovery = period.recovery;
+  container.append(append(node('div', 'delivery-grid'),
+    deliveryMetric('Deployment frequency', String(prd.deployments),
+      `Successful PRD deployments · ${plural(prd.releases, 'release version')}${prd.perWeek !== null ? ` · ${prd.perWeek} per week` : ''}`,
+      'Successful PRD deployment stage attempts, including redeployments.'),
+    deliveryMetric('Lead time', lead.count ? duration(lead.medianMs) : 'Not recorded',
+      lead.count ? `Median of ${plural(lead.count, 'release')} · range ${duration(lead.minMs)}–${duration(lead.maxMs)}${lead.notRecorded ? ` · ${lead.notRecorded} without tag creation` : ''}`
+        : `${lead.notRecorded ? `${plural(lead.notRecorded, 'release')} without retained tag creation evidence` : 'No first PRD deployments in this period'}`,
+      'Release tag created → first successful PRD deployment of that tag. Commit times are not available.'),
+    deliveryMetric('Deployment failure rate', percentage(failure.rate),
+      `${failure.failed} failed of ${failure.failed + failure.succeeded} PRD attempts · ${plural(failure.rollbacks, 'rollback')}`,
+      'Failed PRD deployment stages. Production incidents are not observed; canceled attempts are excluded.'),
+    deliveryMetric('Time to restore', recovery.count ? duration(recovery.medianMs) : 'Not recorded',
+      recovery.count || recovery.unresolved ? `Median of ${plural(recovery.count, 'recovery')}${recovery.unresolved ? ` · ${recovery.unresolved} not yet recovered` : ''}` : 'No failed PRD deployments in this period',
+      'First failed PRD deployment → next successful PRD deployment of any version.')));
+
+  container.append(deliveryTable('Deployments by environment', 'Canonical namespaces only. Each stage attempt counts once; DEV branch namespaces are excluded.',
+    ['Environment', 'Succeeded', 'Failed', 'Canceled', 'Failure rate'],
+    array(period.environments).map((row) => [node('span', 'cell-primary', row.environment), row.succeeded, row.failed, row.canceled, percentage(row.rate)]),
+    'No deployment attempts', 'No deployment attempts are recorded in the scanned history for this period.'));
+
+  container.append(deliveryTable('Release lead times', 'Releases whose first successful PRD deployment falls in this period. Select a date to open its ADO run.',
+    ['Release', 'Tag created', 'First TST', 'First PRE', 'First PRD', 'Lead time'],
+    array(delivery.releases).filter((row) => within(row.firstPrd)).map((row) => [
+      append(node('td'), node('span', 'cell-primary', row.version), node('span', 'cell-secondary mono', shortCommit(row.commit))),
+      deliveryTime(row.created), deliveryTime(row.firstTst), deliveryTime(row.firstPre), deliveryTime(row.firstPrd),
+      node('span', 'cell-primary', row.leadMs === null ? 'Not recorded' : duration(row.leadMs))]),
+    'No first PRD deployments', 'No release reached PRD for the first time within the scanned history for this period.'));
+
+  container.append(deliveryTable('Failed PRD deployments', 'Consecutive failures are grouped until the next successful PRD deployment.',
+    ['Failed', 'Version', 'Failed attempts', 'Recovered', 'Time to restore'],
+    array(delivery.failures).filter((row) => within(row.failed)).map((row) => [
+      deliveryTime(row.failed), row.version || 'Unknown version', row.failedAttempts,
+      row.recovered ? append(node('td'), deliveryTime(row.recovered), node('span', 'cell-secondary', row.recovered.version || '')) : node('span', 'muted', 'Not yet recovered'),
+      row.recoveryMs === null ? 'Open' : duration(row.recoveryMs)]),
+    'No failed PRD deployments', 'No failed PRD deployment attempts are recorded in the scanned history for this period.'));
+
+  const rollbacks = array(delivery.rollbacks).filter((row) => within(row.deployment));
+  if (rollbacks.length) container.append(deliveryTable('Rollbacks', 'Successful PRD deployments of a lower version than the previous successful PRD deployment.',
+    ['Deployed', 'Version', 'Replaced'], rollbacks.map((row) => [deliveryTime(row.deployment), row.version, row.previousVersion]), '', ''));
+  container.append(node('p', 'release-history-note', 'Measures use retained ADO records within the scan limit. Deleted runs, older retries and deployments outside these pipelines are not counted, and a successful deployment does not verify what is running now.'));
 }
 
 function activateTab(name) {

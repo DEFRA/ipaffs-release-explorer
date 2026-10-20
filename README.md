@@ -110,6 +110,7 @@ permissions or pipeline changes are needed for this view.
 | Release candidates and effective manifest commit | Successful Create Release task logs | Tags absent from retained pipeline history cannot be enumerated without another source. |
 | Previous releases and deployment dates | Successful PRD deployment, source tag and manifest commit, plus matching per-environment timelines | Limited to retained scanned runs and attempts; missing dates are not inferred. |
 | Approvals and progress | Native stage results, including incomplete release runs | Overall run status is not the result of every environment. |
+| Delivery metrics | Deployment stage outcomes and successful Create Release task logs | Pipeline outcomes only; incidents and commit times are not observed. |
 | Linked QA result | Child run ID in the existing QA trigger log, then the child's current ADO result | The request does not record the exact manifest revision tested. |
 | Failures and reruns | Timeline outcomes and attempts | Older attempts may not be retained; uncertainty is shown rather than guessed. |
 
@@ -251,6 +252,33 @@ history request fails, the refresh reports an error instead of silently
 falling back to an older API version that may omit abandonment. Timeline, log
 and Environment requests retain their existing API versions. Missing deployment
 history alone does not hide a candidate.
+
+## Delivery metrics
+
+The **Delivery** tab shows four DORA-style measures for the last 30 or 90
+days. They are reconstructed from the same scanned runs as the rest of the
+dashboard, so they describe pipeline outcomes rather than production incidents.
+
+| Measure | Definition |
+| --- | --- |
+| Deployment frequency | Successful PRD deployment stage attempts, including redeployments, with distinct release versions and a weekly rate |
+| Lead time | Median time from a successful Create Release tag-creation log to the first successful PRD deployment of that exact tag and commit |
+| Deployment failure rate | Failed PRD stage attempts as a share of failed and successful attempts; canceled attempts are excluded |
+| Time to restore | Median time from the first failed PRD attempt to the next successful PRD deployment of any version |
+
+Each stage attempt counts once, however many DeployChart jobs it has; any failed
+job fails the attempt. Consecutive failures form one interruption. A successful
+PRD deployment of a lower version than the previous success is listed as a
+rollback. A table compares the four canonical namespaces, so DEV branch
+namespaces are excluded. Release lead-time, failure and rollback rows link to
+the ADO runs behind each date.
+
+Commit times would need GitHub access, so lead time starts at tag creation.
+A release without retained creation evidence, or one deployed before its
+recorded creation time, is counted as **not recorded** rather than estimated.
+When the earliest scanned release run is inside the selected period, the tab
+states how many days the history actually covers and calculates the weekly rate
+over those days only. Runs outside the scan limit and deleted runs are not counted.
 
 ## Configuration and scope
 
