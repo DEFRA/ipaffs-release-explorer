@@ -38,7 +38,7 @@ function externalLink(label, value, className) {
 
 function safeGithubCompareUrl(value) {
   const version = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)';
-  const pattern = new RegExp(`^https://github\\.com/DEFRA/ipaffs-manifest/compare/tags/${version}\\.\\.\\.tags/${version}$`);
+  const pattern = new RegExp(`^https://github\\.com/DEFRA/ipaffs-manifest/compare/${version}\\.\\.\\.${version}$`);
   if (typeof value !== 'string' || !pattern.test(value)) return null;
   try {
     const url = new URL(value);
@@ -50,7 +50,7 @@ function safeGithubCompareUrl(value) {
 function releaseComparisonUrl(comparison) {
   if (!comparison) return null;
   const url = safeGithubCompareUrl(comparison.url);
-  const expected = `https://github.com/DEFRA/ipaffs-manifest/compare/tags/${comparison.baseVersion}...tags/${comparison.headVersion}`;
+  const expected = `https://github.com/DEFRA/ipaffs-manifest/compare/${comparison.baseVersion}...${comparison.headVersion}`;
   return url && url === expected && comparison.baseVersion !== comparison.headVersion ? url : null;
 }
 

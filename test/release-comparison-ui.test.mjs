@@ -17,7 +17,7 @@ const source = (await readFile(new URL('../public/app.js', import.meta.url), 'ut
   .split("$('refresh').addEventListener('click'")[0];
 const descendants = element => [element, ...element.children.filter(child => child instanceof Element).flatMap(descendants)];
 const linksIn = element => descendants(element).filter(child => child.tagName === 'a');
-const compareUrl = (base, head = '4.2.3') => `https://github.com/DEFRA/ipaffs-manifest/compare/tags/${base}...tags/${head}`;
+const compareUrl = (base, head = '4.2.3') => `https://github.com/DEFRA/ipaffs-manifest/compare/${base}...${head}`;
 const comparison = (baseVersion, overrides = {}) => ({
   baseVersion, headVersion: '4.2.3', url: compareUrl(baseVersion),
   detail: 'Compares the last successful deployment from a different major.minor series with this release tag.',
@@ -89,6 +89,24 @@ test('environments sharing a baseline have one comparison below progress while d
   assert.equal(JSON.stringify(candidate), before, 'grouping must preserve environment-specific comparison evidence');
 });
 
+test('the reported 26.3.1 to 26.4.1 comparison opens the canonical tag URL in summaries and drawers', () => {
+  const { context, drawer } = renderer();
+  const candidate = release();
+  candidate.version = '26.4.1';
+  const url = 'https://github.com/DEFRA/ipaffs-manifest/compare/26.3.1...26.4.1';
+  candidate.progress = [{
+    environment: 'TST', status: 'not-recorded', label: 'No record',
+    comparison: comparison('26.3.1', { headVersion: '26.4.1', url }),
+  }];
+  const rendered = context.releaseProgress(candidate);
+  const links = linksIn(rendered);
+  assert.equal(links.length, 1);
+  assert.equal(links[0].href, url);
+  assert.equal(links[0].textContent, 'Compare 26.3.1 → 26.4.1 ↗');
+  context.openReleaseProgress(candidate, candidate.progress[0]);
+  assert.equal(linksIn(drawer)[0].href, url);
+});
+
 test('GitHub compare URL validation accepts only exact manifest tag comparisons and leaves ADO links restricted', () => {
   const { context } = renderer();
   assert.equal(context.safeGithubCompareUrl(compareUrl('0.0.0')), compareUrl('0.0.0'));
@@ -101,7 +119,9 @@ test('GitHub compare URL validation accepts only exact manifest tag comparisons 
     compareUrl('4.1.9').replace('github.com', 'github.com:8443'),
     compareUrl('4.1.9').replace('DEFRA', 'other-owner'),
     compareUrl('4.1.9').replace('ipaffs-manifest', 'other-repo'),
-    compareUrl('4.1.9').replace('/tags/', '/heads/'),
+    'https://github.com/DEFRA/ipaffs-manifest/compare/tags/26.3.1...tags/26.4.1',
+    'https://github.com/DEFRA/ipaffs-manifest/compare/heads/4.1.9...heads/4.2.3',
+    'https://github.com/DEFRA/ipaffs-manifest/compare/RELEASE/26.3.x...RELEASE/26.4.x',
     compareUrl('4.1.9').replace('/compare/', '/compare/../compare/'),
     `${compareUrl('4.1.9')}?expand=1`,
     `${compareUrl('4.1.9')}#files`,
