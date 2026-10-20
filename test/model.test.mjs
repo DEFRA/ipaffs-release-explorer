@@ -784,7 +784,7 @@ test('later approval failures cannot block earlier environments', () => {
   assert.equal(progress(data, 'PRE').status, 'not-started');
 });
 
-const githubComparison = (base, head = '4.2.0') => `https://github.com/DEFRA/ipaffs-manifest/compare/tags/${base}...tags/${head}`;
+const githubComparison = (base, head = '4.2.0') => `https://github.com/DEFRA/ipaffs-manifest/compare/${base}...${head}`;
 
 test('release comparisons use independent TST and PRE baselines without requiring any PRD history', () => {
   const data = candidateModel([

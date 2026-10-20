@@ -5,7 +5,7 @@ import { attachReleaseComparisons } from '../src/release-comparison.mjs';
 const sha = 'a'.repeat(40);
 const baselineSha = 'b'.repeat(40);
 const otherSha = 'c'.repeat(40);
-const compareUrl = (base, head = '4.2.3') => `https://github.com/DEFRA/ipaffs-manifest/compare/tags/${base}...tags/${head}`;
+const compareUrl = (base, head = '4.2.3') => `https://github.com/DEFRA/ipaffs-manifest/compare/${base}...${head}`;
 const release = (overrides = {}) => ({
   version: '4.2.3', commit: sha,
   progress: ['DEV', 'TST', 'PRE', 'PRD'].map(environment => ({ environment })),
@@ -34,6 +34,15 @@ test('each canonical environment has its own full tag baseline from a different 
     assert.equal(progress.comparison.url, compareUrl(versions[index]));
     assert.match(progress.comparison.detail, new RegExp(progress.environment));
   });
+});
+
+test('the reported 26.3.1 to 26.4.1 comparison uses the canonical GitHub URL with exact deployed tags', () => {
+  const candidate = release({ version: '26.4.1' });
+  attach([candidate], [environment('TST', deployment('26.3.1'))]);
+  const result = comparison(candidate, 'TST');
+  assert.equal(result.baseVersion, '26.3.1');
+  assert.equal(result.headVersion, '26.4.1');
+  assert.equal(result.url, 'https://github.com/DEFRA/ipaffs-manifest/compare/26.3.1...26.4.1');
 });
 
 test('latest failed or in-progress attempts cannot replace the recorded successful baseline', () => {

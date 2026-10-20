@@ -83,6 +83,9 @@ they do not verify current GitHub tags or the running workload and need no GitHu
 API access. GitHub's
 [tag comparison view](https://docs.github.com/en/pull-requests/how-tos/commit-changes/comparing-commits#comparing-tags)
 opens in a new tab, with the deployed tag as the base.
+Links use GitHub's canonical `compare/<base-tag>...<candidate-tag>` URL, for
+example `compare/26.3.1...26.4.1`, so the comparison stays tied to the recorded
+versions rather than the moving release branches.
 
 History is ordered by the latest successful PRD completion, so an older version
 redeployed later appears first. A tag at different commits remains separate.

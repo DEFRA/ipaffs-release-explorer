@@ -64,7 +64,7 @@ export function attachReleaseComparisons(releases, environments, identities = []
         progress.comparison = unavailable('Conflicting commits recorded for a comparison tag.');
       } else progress.comparison = {
         baseVersion, headVersion: release.version, matchedBy,
-        url: `https://github.com/DEFRA/ipaffs-manifest/compare/tags/${baseVersion}...tags/${release.version}`,
+        url: `https://github.com/DEFRA/ipaffs-manifest/compare/${baseVersion}...${release.version}`,
         detail: `Compare the last successful recorded ${environment.name} deployment from a different major/minor series with this release tag.${matchedBy === 'commit' ? ' The DEV tag is matched by manifest commit; DEV deployed a branch build.' : ''}`,
       };
     }
