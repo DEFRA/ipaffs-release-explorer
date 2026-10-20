@@ -63,6 +63,27 @@ redeployments, their original run requesters and ADO links. DEV matches the
 manifest commit in a recorded namespace; it does not establish deployment of the
 release tag itself.
 
+Candidate progress includes GitHub **Compare** links beneath the environment
+progress. Environments with the same baseline share one link; different baselines
+have separate links. Each compares the last successful deployment from a
+**different major/minor series** with the candidate's full
+`major.minor.patch` tag in `DEFRA/ipaffs-manifest`. For example, an environment
+last deployed at `26.2.9` links to a comparison against
+candidate `26.3.0`; later `26.3.x` deployments are skipped when selecting the base.
+Each patch keeps its own comparison when a series is expanded.
+The latest failed or pending attempt never replaces the successful baseline;
+rollback deployments follow deployment order rather than version order.
+
+DEV uses its canonical `dev` namespace. A branch build can provide a tag baseline
+only when its exact manifest commit maps to one recorded release tag. Missing or
+ambiguous identities and tags observed at conflicting commits show an explanation
+in the environment details instead of a link. If no different-series deployment
+is retained, the comparison is unavailable. These links use retained ADO evidence;
+they do not verify current GitHub tags or the running workload and need no GitHub
+API access. GitHub's
+[tag comparison view](https://docs.github.com/en/pull-requests/how-tos/commit-changes/comparing-commits#comparing-tags)
+opens in a new tab, with the deployed tag as the base.
+
 History is ordered by the latest successful PRD completion, so an older version
 redeployed later appears first. A tag at different commits remains separate.
 Successful deployments remain recorded even if their parent pipeline was later

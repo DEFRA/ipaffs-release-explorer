@@ -36,6 +36,62 @@ function externalLink(label, value, className) {
   return link;
 }
 
+function safeGithubCompareUrl(value) {
+  const version = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)';
+  const pattern = new RegExp(`^https://github\\.com/DEFRA/ipaffs-manifest/compare/tags/${version}\\.\\.\\.tags/${version}$`);
+  if (typeof value !== 'string' || !pattern.test(value)) return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && url.hostname === 'github.com' && !url.port
+      && !url.username && !url.password && !url.search && !url.hash ? url.href : null;
+  } catch { return null; }
+}
+
+function releaseComparisonUrl(comparison) {
+  if (!comparison) return null;
+  const url = safeGithubCompareUrl(comparison.url);
+  const expected = `https://github.com/DEFRA/ipaffs-manifest/compare/tags/${comparison.baseVersion}...tags/${comparison.headVersion}`;
+  return url && url === expected && comparison.baseVersion !== comparison.headVersion ? url : null;
+}
+
+function releaseComparison(progress, { compact = false, environments = null } = {}) {
+  const comparison = progress.comparison;
+  if (!comparison) return null;
+  const url = releaseComparisonUrl(comparison);
+  const audience = environments ? environments.join(', ') : progress.environment;
+  let link = null;
+  if (url) {
+    link = node('a', compact ? 'progress-comparison' : 'release-comparison-link', `Compare ${comparison.baseVersion} → ${comparison.headVersion} ↗`);
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.setAttribute('aria-label', `Compare ${comparison.baseVersion} to ${comparison.headVersion} for ${audience} on GitHub (opens in a new tab)`);
+    if (environments) link.title = `Compare the last successful recorded deployment from a different major/minor series for ${audience} with this release tag.`;
+    else if (comparison.detail) link.title = comparison.detail;
+  }
+  const detail = comparison.detail || 'Comparison is unavailable.';
+  if (compact) return link;
+  return append(node('section', 'drawer-section release-comparison'),
+    node('h3', '', 'Compare with last different release series'), link, node('p', 'release-comparison-detail', detail));
+}
+
+function groupedReleaseComparisons(entries) {
+  const groups = new Map();
+  for (const progress of entries) {
+    if (!progress.comparison) continue;
+    const url = releaseComparisonUrl(progress.comparison);
+    if (!url) continue;
+    if (!groups.has(url)) groups.set(url, { progress, environments: [] });
+    groups.get(url).environments.push(progress.environment);
+  }
+  if (!groups.size) return null;
+  const container = node('div', 'release-comparisons');
+  container.setAttribute('role', 'group');
+  container.setAttribute('aria-label', 'GitHub release comparisons');
+  groups.forEach(({ progress, environments }) => container.append(releaseComparison(progress, { compact: true, environments })));
+  return container;
+}
+
 function safeApplicationUrl(value) {
   try {
     const url = new URL(value);
@@ -608,7 +664,8 @@ function distinctAttempt(progress) {
 function releaseProgress(release) {
   const list = node('ol', 'release-progress');
   list.setAttribute('aria-label', `Recorded deployment progress for ${release.version || 'this release'}`);
-  progressEntries(release).forEach((progress) => {
+  const entries = progressEntries(release);
+  entries.forEach((progress) => {
     const tone = progressTone(progress.status);
     const control = button('', `progress-step progress-${tone}`, () => openReleaseProgress(release, progress));
     const label = progress.label || badge(progress.status).textContent;
@@ -632,7 +689,7 @@ function releaseProgress(release) {
     }
     list.append(append(node('li'), control));
   });
-  return list;
+  return append(node('div', 'release-progress-summary'), list, groupedReleaseComparisons(entries));
 }
 
 function activateTab(name) {
@@ -768,6 +825,7 @@ function openReleaseProgress(release, progress) {
     ['Environment', progress.environment], ['Release version', release.version], ['Manifest commit', release.commit || 'Not recorded', 'mono'],
     ['Matched by', progress.matchedBy === 'tag-and-commit' ? 'Release tag and manifest commit' : progress.matchedBy === 'commit' ? 'Manifest commit' : 'No confirmed match'],
   ]));
+  append(content, releaseComparison(progress));
   if (release.history) {
     const deployments = array(progress.deployments).length ? progress.deployments : progress.lastSuccess ? [progress.lastSuccess] : [];
     if (distinctAttempt(progress)) appendProgressDeployment(content, 'Latest attempt', progress.latestAttempt, progress.environment);
