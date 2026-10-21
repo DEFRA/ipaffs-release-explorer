@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 const execute = promisify(execFile);
 const directory = dirname(dirname(fileURLToPath(import.meta.url)));
 const script = join(directory, 'deploy/scripts/deploy-dev.sh');
-const optionalIds = ['ADO_QA_DEV_PIPELINE_ID', 'ADO_QA_TST_PIPELINE_ID', 'ADO_SCAN_PIPELINE_ID'];
+const optionalIds = ['ADO_QA_DEV_PIPELINE_ID', 'ADO_QA_TST_PIPELINE_ID', 'ADO_SCAN_PIPELINE_ID', 'ADO_SECRET_EXPIRY_PIPELINE_ID'];
 const clientId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 const tenantId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
 const issuer = 'https://example.oic.prod-aks.azure.com/example/issuer/';
@@ -105,9 +105,9 @@ if (command === 'az' && args[0] === 'aks' && args[1] === 'show') {
 
 test('private library evidence IDs reach Helm as numbers and legacy QA may have no history', async t => {
   const run = await fixture(t);
-  const result = await run({ ADO_QA_DEV_PIPELINE_ID: '105', ADO_QA_TST_PIPELINE_ID: '106', ADO_SCAN_PIPELINE_ID: '107' });
+  const result = await run({ ADO_QA_DEV_PIPELINE_ID: '105', ADO_QA_TST_PIPELINE_ID: '106', ADO_SCAN_PIPELINE_ID: '107', ADO_SECRET_EXPIRY_PIPELINE_ID: '108' });
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(result.values.ado.pipelines, { dev: 101, createRelease: 102, release: 103, qa: 104, qaDev: 105, qaTst: 106, scan: 107 });
+  assert.deepEqual(result.values.ado.pipelines, { dev: 101, createRelease: 102, release: 103, qa: 104, qaDev: 105, qaTst: 106, scan: 107, secretExpiry: 108 });
   assert.match(result.stdout, /ADO read smoke check passed/);
   const pipeline = await readFile(join(directory, 'pipeline.yaml'), 'utf8');
   for (const name of optionalIds) assert.ok(pipeline.includes(`${name}: $(${name})`), `${name} must be forwarded from the library`);
@@ -118,7 +118,7 @@ test('absent, empty and exact unresolved optional macros become null Helm values
   for (const overrides of [{}, Object.fromEntries(optionalIds.map(name => [name, ''])), Object.fromEntries(optionalIds.map(name => [name, `$(${name})`]))]) {
     const result = await run(overrides);
     assert.equal(result.code, 0, result.stderr);
-    assert.deepEqual(result.values.ado.pipelines, { dev: 101, createRelease: 102, release: 103, qa: 104, qaDev: null, qaTst: null, scan: null });
+    assert.deepEqual(result.values.ado.pipelines, { dev: 101, createRelease: 102, release: 103, qa: 104, qaDev: null, qaTst: null, scan: null, secretExpiry: null });
   }
 });
 

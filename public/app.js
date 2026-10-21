@@ -504,6 +504,59 @@ function vulnerabilitySummary(scan, { compact = false, release = false } = {}) {
   return section;
 }
 
+function secretHealthSummary(health, environment) {
+  const reportState = ['complete', 'partial', 'running', 'unavailable'].includes(health?.state) ? health.state : 'unavailable';
+  const counts = ['complete', 'partial'].includes(reportState) && health?.counts
+    && ['green', 'amber', 'red'].every(colour => Number.isSafeInteger(health.counts[colour]) && health.counts[colour] >= 0)
+    ? health.counts : null;
+  const checkedAt = typeof health?.checkedAt === 'string' && Number.isFinite(Date.parse(health.checkedAt)) ? health.checkedAt : null;
+  let colour = ['complete', 'partial'].includes(reportState) && ['green', 'amber', 'red'].includes(health?.colour) ? health.colour : 'grey';
+  if (colour === 'green' && (!counts || !checkedAt || counts.green + counts.amber + counts.red === 0)) colour = 'grey';
+  if (colour === 'green' && counts.red) colour = 'red';
+  if (colour === 'green' && counts.amber) colour = 'amber';
+  if (colour === 'green' && (reportState === 'partial' || health?.stale)) colour = 'amber';
+  const label = reportState === 'running' ? 'Report running'
+    : { green: 'Healthy', amber: 'Attention', red: 'Action required', grey: 'Unavailable' }[colour];
+  const section = node('section', 'secret-health-summary');
+  section.setAttribute('aria-label', `Secret and certificate health for ${environment || 'this environment'}`);
+  const heading = node('span', 'secret-health-label', 'Secrets & certificates');
+  heading.title = 'Expiry colours: green above 60 days; amber at 30–60 days or missing expiry; red below 30 days, including expired.';
+  const indicator = node('span', 'secret-health-indicator');
+  indicator.setAttribute('aria-hidden', 'true');
+  const metric = append(node('p', `secret-health-metric secret-health-${colour}`), indicator, node('span', '', label));
+  append(section, heading, metric);
+  const notes = [];
+  if (reportState === 'partial') notes.push('Incomplete report');
+  if (health?.stale) notes.push('Stale report');
+  if (notes.length) section.append(node('p', 'secret-health-warning', notes.join(' · ')));
+  if (counts && colour !== 'grey') {
+    const parts = ['red', 'amber', 'green'].filter(key => counts[key]).map(key => `${counts[key]} ${key}`);
+    if (parts.length) section.append(node('p', 'secret-health-counts', parts.join(' · ')));
+  }
+  if (typeof health?.detail === 'string' && health.detail) section.append(node('p', 'secret-health-detail', health.detail));
+  const fingerprintMismatches = Number.isSafeInteger(health?.fingerprintMismatches) && health.fingerprintMismatches > 0 ? health.fingerprintMismatches : 0;
+  const fingerprintUnknown = Number.isSafeInteger(health?.fingerprintUnknown) && health.fingerprintUnknown > 0 ? health.fingerprintUnknown : 0;
+  if (fingerprintMismatches || fingerprintUnknown) {
+    const fingerprints = [];
+    if (fingerprintMismatches) fingerprints.push(`${fingerprintMismatches} certificate fingerprint ${fingerprintMismatches === 1 ? 'mismatch' : 'mismatches'}`);
+    if (fingerprintUnknown) fingerprints.push(`${fingerprintUnknown} fingerprint ${fingerprintUnknown === 1 ? 'comparison' : 'comparisons'} unavailable`);
+    section.append(node('p', 'secret-health-warning', fingerprints.join(' · ')));
+  }
+  const evidence = node('div', 'secret-health-evidence');
+  if (checkedAt) {
+    const updated = node('time', 'secret-health-meta', `Last updated ${date(checkedAt, true)}`);
+    updated.setAttribute('datetime', checkedAt);
+    evidence.append(updated);
+  } else evidence.append(node('p', 'secret-health-meta', 'Last updated: unavailable'));
+  if (safeUrl(health?.url)) {
+    const link = externalLink('View report ↗', health.url, 'secret-health-report-link');
+    link.setAttribute('aria-label', `View secret and certificate report for ${environment || 'this environment'}${health.runId ? `, run ${health.runId}` : ''} in Azure DevOps (opens in a new tab)`);
+    evidence.append(link);
+  }
+  section.append(evidence);
+  return section;
+}
+
 function renderEnvironments() {
   const container = $('environment-grid');
   container.replaceChildren();
@@ -517,7 +570,7 @@ function renderEnvironments() {
     } else {
       append(main, node('p', 'version-empty', 'No deployment found'), node('p', 'card-commit', 'Within scanned history'), badge('unknown'), node('p', 'deployment-time', 'No successful ADO record'));
     }
-    append(card, main, qaSummary(deployment, { compact: true }), vulnerabilitySummary(environment.vulnerability ?? deployment?.vulnerability, { compact: true }));
+    append(card, main, qaSummary(deployment, { compact: true }), vulnerabilitySummary(environment.vulnerability ?? deployment?.vulnerability, { compact: true }), secretHealthSummary(environment.secretHealth, environment.name));
     const footer = node('div', 'card-footer');
     const latest = environment.latestAttempt;
     if (latest && (!deployment || latest.runId !== deployment.runId || latest.attempt !== deployment.attempt || normalizedStatus(recordStatus(latest)) !== 'succeeded')) {

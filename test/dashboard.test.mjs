@@ -72,7 +72,7 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelin
     },
   });
   return {
-    service: createDashboardService({ ...config, qaPipelines: {}, scanPipeline: null, devUrls,
+    service: createDashboardService({ ...config, qaPipelines: {}, scanPipeline: null, secretExpiryPipeline: null, devUrls,
       kubernetes: { namespaceChecksEnabled: Boolean(namespaceClient) } }, client, { ...(now ? { now } : {}), ...(namespaceClient ? { namespaceClient } : {}) }), calls,
     setRuns(next) { runs = next; },
     setRetentionPolicy(next) { policy = next; },

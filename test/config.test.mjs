@@ -22,6 +22,14 @@ test('vulnerability scan discovery works without deployment configuration change
   assert.throws(() => loadConfig({ ...environment, ADO_SCAN_PIPELINE_ID: 'invalid' }), /ADO_SCAN_PIPELINE_ID/);
 });
 
+test('secret expiry reporting uses exact-name discovery with an optional pipeline ID', () => {
+  assert.deepEqual(loadConfig(environment).secretExpiryPipeline, { id: null, name: 'Report OAuth Secret Expiry' });
+  assert.equal(loadConfig({ ...environment, ADO_SECRET_EXPIRY_PIPELINE_ID: '108' }).secretExpiryPipeline.id, 108);
+  for (const value of ['invalid', '0', '-1', '1.5', '100000001']) {
+    assert.throws(() => loadConfig({ ...environment, ADO_SECRET_EXPIRY_PIPELINE_ID: value }), /ADO_SECRET_EXPIRY_PIPELINE_ID/);
+  }
+});
+
 test('fixed QA pipeline IDs are optional overrides of exact-name discovery', () => {
   assert.deepEqual(loadConfig(environment).qaPipelines, {
     qaDev: { id: null, name: 'Test DEV', path: '\\QA' },

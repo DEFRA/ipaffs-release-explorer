@@ -280,6 +280,33 @@ When the earliest scanned release run is inside the selected period, the tab
 states how many days the history actually covers and calculates the weekly rate
 over those days only. Runs outside the scan limit and deleted runs are not counted.
 
+## Secret and certificate report health
+
+Each canonical environment card shows a **Secrets & certificates** indicator from
+the daily report's `secret-expiry-all/report.json` artifact. The indicator uses the
+worst expiry colour among that environment's rows: green above 60 days, amber from
+30 through 60 days or when expiry cannot be read, and red below 30 days, including
+already expired credentials. These bands match the report and are independent of
+its configurable warning window. Certificate fingerprint warnings are shown
+separately from expiry colours.
+
+**Last updated** is the time that environment was checked, rather than the time
+the dashboard refreshed or the combined report was generated. **View report** opens
+the corresponding run's Extensions tab in Azure DevOps. Incomplete and unavailable
+reports are labelled explicitly; results older than 48 hours are marked stale and
+cannot show a healthy green indicator. A failed reporting run can still provide
+usable results, because expiry findings and collection failures are distinct.
+
+This is report evidence for DEV, TST, PRE and PRD's canonical namespaces. It does
+not establish current endpoint health, expiry of other certificate copies or the
+health of DEV branch namespaces or historical releases. No secret values are
+retrieved or sent to the browser.
+
+The app discovers `Report OAuth Secret Expiry` by exact name across folders.
+Set optional `ADO_SECRET_EXPIRY_PIPELINE_ID` to pin its identity if the pipeline is
+renamed or its display name is ambiguous. The Helm value is
+`ado.pipelines.secretExpiry`; no override is required for existing deployments.
+
 ## Configuration and scope
 
 The server requires an explicit organisation, project and four pipeline IDs:

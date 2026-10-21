@@ -65,6 +65,10 @@ export function loadConfig(env = process.env) {
       id: env.ADO_SCAN_PIPELINE_ID ? integer('ADO_SCAN_PIPELINE_ID') : null,
       name: 'Scan Manifest Images for Vulnerabilities',
     },
+    secretExpiryPipeline: {
+      id: env.ADO_SECRET_EXPIRY_PIPELINE_ID ? integer('ADO_SECRET_EXPIRY_PIPELINE_ID') : null,
+      name: 'Report OAuth Secret Expiry',
+    },
     environmentNames: ['DEV', 'TST', 'PRE', 'PRD'],
     devUrls: canonicalDevUrls(env),
     kubernetes: { namespaceChecksEnabled: namespaceChecks === 'true' },

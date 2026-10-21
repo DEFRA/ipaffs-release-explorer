@@ -37,6 +37,11 @@ export function sampleDashboard() {
     { critical: 0, high: 0, medium: 21, low: 5, unknown: 0 }, { total: 10, scanned: 8, failed: 2 },
     { critical: 0, high: 0, medium: 9, low: 3, unknown: 0 });
   const failedScan = vulnerability(403, 'failed', 140);
+  const secretHealth = (colour, counts, detail) => ({
+    state: 'complete', colour, counts, detail, checkedAt: at(6), stale: false,
+    runId: 406, url: `${url(406)}&view=ms.vss-build-web.run-extensions-tab`,
+    fingerprintMismatches: 0, fingerprintUnknown: 0,
+  });
   const deploy = (id, environment, version, status, hours, namespace = environment.toLowerCase()) => ({
     runId: id, environment, namespace, version, status, commit: 'a'.repeat(40), attempt: 1,
     startedAt: status === 'pending' ? null : at(hours + 0.2), finishedAt: status === 'succeeded' ? at(hours) : null,
@@ -67,10 +72,16 @@ export function sampleDashboard() {
       { label: 'Revision-specific QA', status: 'partial', detail: 'A linked QA run does not prove the exact revision tested.' },
     ],
     environments: [
-      { name: 'DEV', namespace: 'dev', lastSuccess: dev, latestAttempt: dev, vulnerability: masterScan },
-      { name: 'TST', namespace: 'tst', lastSuccess: tst, latestAttempt: tst },
-      { name: 'PRE', namespace: 'pre', lastSuccess: pre, latestAttempt: pre },
-      { name: 'PRD', namespace: 'prd', lastSuccess: previousPrd, latestAttempt: deploy(100, 'PRD', '4.2.0', 'pending', 0) },
+      { name: 'DEV', namespace: 'dev', lastSuccess: dev, latestAttempt: dev, vulnerability: masterScan,
+        secretHealth: secretHealth('green', { green: 15, amber: 0, red: 0 }, 'All reported expiry dates are more than 60 days away.') },
+      { name: 'TST', namespace: 'tst', lastSuccess: tst, latestAttempt: tst,
+        secretHealth: secretHealth('amber', { green: 13, amber: 2, red: 0 }, 'Two reported expiry dates are within 30–60 days.') },
+      { name: 'PRE', namespace: 'pre', lastSuccess: pre, latestAttempt: pre,
+        secretHealth: secretHealth('red', { green: 13, amber: 1, red: 1 }, 'One item expires in fewer than 30 days.') },
+      { name: 'PRD', namespace: 'prd', lastSuccess: previousPrd, latestAttempt: deploy(100, 'PRD', '4.2.0', 'pending', 0),
+        secretHealth: { state: 'unavailable', colour: 'grey', counts: null, checkedAt: null, stale: false,
+          detail: 'The environment report could not be read.', runId: 406,
+          url: `${url(406)}&view=ms.vss-build-web.run-extensions-tab`, fingerprintMismatches: 0, fingerprintUnknown: 0 } },
     ],
     namespaces: [
       { name: 'dev', kind: 'canonical', branch: 'refs/heads/master', lastSuccess: dev, latestAttempt: dev,

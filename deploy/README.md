@@ -41,13 +41,14 @@ public repository. Populate it from your existing DEV configuration:
 | `ADO_QA_DEV_PIPELINE_ID` | Optional fixed DEV QA pipeline ID; pins evidence lookup across pipeline renames and folder moves |
 | `ADO_QA_TST_PIPELINE_ID` | Optional fixed TST QA pipeline ID; pins evidence lookup across pipeline renames and folder moves |
 | `ADO_SCAN_PIPELINE_ID` | Optional manifest vulnerability scan pipeline ID; pins evidence lookup across pipeline renames and folder moves |
+| `ADO_SECRET_EXPIRY_PIPELINE_ID` | Optional secret and certificate report pipeline ID; otherwise discovers `Report OAuth Secret Expiry` by exact name across folders |
 | `DEV_B2C_URL` | Optional canonical DEV public-facing frontend HTTPS URL; set together with `DEV_B2B_URL` |
 | `DEV_B2B_URL` | Optional canonical DEV internal frontend HTTPS URL; set together with `DEV_B2C_URL` |
 
 Identity IDs are outputs of the deployment job. Do not add them to the variable
 group; the pipeline obtains them from Azure on every deployment.
 
-The three optional evidence pipeline IDs must be positive integers no greater
+The four optional evidence pipeline IDs must be positive integers no greater
 than `100000000`. When omitted, the app uses exact-name discovery. Configure
 these IDs in this private variable group when pipelines have been renamed;
 the deployment passes them through Helm without putting real IDs in source.
