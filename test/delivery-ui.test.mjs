@@ -20,6 +20,7 @@ function render(data) {
   const elements = new Map();
   const context = vm.createContext({ URL, Intl, Node: Element, document: {
     createElement: tag => new Element(tag),
+    createElementNS: (namespace, tag) => new Element(tag),
     createTextNode: value => String(value),
     getElementById: id => {
       if (!elements.has(id)) elements.set(id, new Element('div'));
@@ -41,7 +42,8 @@ test('delivery tab shows the four measures with their definitions and period cov
   assert.match(text, /Production incidents are not observed/);
   assert.match(text, /covers the full 30 days/);
   assert.match(text, /Deployments by environment/);
-  assert.match(text, /Release lead times/);
+  assert.match(text, /Every release candidate, TST to production/);
+  assert.match(text, /Lead time per production release/);
   assert.match(text, /Failed PRD deployments/);
 });
 
@@ -55,6 +57,7 @@ test('switching to 90 days explains partial history and lists rollbacks', () => 
   const text = content.textContent;
   assert.match(text, /covers 81\.\d of 90 days/);
   assert.match(text, /Rollbacks/);
+  assert.match(text, /Median of 2 recoveries/);
   assert.equal(descendants(controls).find(child => child.textContent === '90 days').attributes['aria-pressed'], 'true');
 });
 
@@ -63,7 +66,37 @@ test('evidence dates link only to ADO runs', () => {
   data.delivery.releases[0].firstPrd.url = 'https://example.invalid/run';
   const links = descendants(render(data).content).filter(child => child.tagName === 'a');
   assert.ok(links.length > 0);
-  assert.ok(links.every(link => new URL(link.href).hostname === 'dev.azure.com'));
+  assert.ok(links.every(link => new URL(link.href || link.attributes.href).hostname === 'dev.azure.com'));
+});
+
+test('the candidate timeline shows every tag deployed in the period with its stage points', () => {
+  const data = sampleDashboard();
+  const { content, controls, context } = render(data);
+  const timeline = () => descendants(content).find(child => child.tagName === 'svg' && /release candidate/.test(child.attributes['aria-label']));
+  const labels = () => descendants(timeline()).filter(child => String(child.attributes.class).startsWith('chart-row-label'));
+  assert.deepEqual(labels().map(label => label.children[0]), ['4.1.0', '4.1.1', '4.1.2', '4.1.3', '4.2.0']);
+  assert.ok(descendants(timeline()).some(child => child.attributes.class === 'chart-dot pre'));
+  descendants(controls).find(child => child.textContent === '90 days').listeners.click();
+  assert.equal(vm.runInContext('state.deliveryWindow', context), 90);
+  const replaced = descendants(timeline()).find(child => child.attributes.class === 'chart-row-label replaced');
+  assert.equal(replaced.children[0], '4.0.2');
+  assert.ok(descendants(timeline()).some(child => child.attributes.class === 'chart-failed'));
+});
+
+test('lead time bars split each release by stage and mark the median', () => {
+  const { content } = render(sampleDashboard());
+  const chart = descendants(content).find(child => child.tagName === 'svg' && /Lead time/.test(child.attributes['aria-label']));
+  const segments = descendants(chart).filter(child => String(child.attributes.class).startsWith('chart-segment'));
+  assert.deepEqual([...new Set(segments.map(segment => segment.attributes.class))], ['chart-segment tag', 'chart-segment pre', 'chart-segment prd']);
+  assert.match(chart.textContent, /Median/);
+  assert.match(chart.textContent, /Days from release tag to production/);
+});
+
+test('a release without retained tag creation is labelled instead of drawn', () => {
+  const data = sampleDashboard();
+  data.delivery.releases.forEach(row => { row.created = null; row.leadMs = null; });
+  const text = render(data).content.textContent;
+  assert.match(text, /Tag creation not retained/);
 });
 
 test('missing delivery data renders an explicit unavailable state rather than zeros', () => {

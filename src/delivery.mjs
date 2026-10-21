@@ -62,6 +62,8 @@ export function deliveryMetrics({ deployments = [], releases = [], coverageStart
     const previous = created.get(identity(release));
     if (!previous || time(release.observedAt) < time(previous.observedAt)) created.set(identity(release), release);
   }
+  const createdReference = release => release
+    ? { at: iso(time(release.observedAt)), runId: release.runId || null, url: release.evidence?.[0]?.url || release.url || null } : null;
   const leadTimes = [];
   const released = new Map();
   for (const success of prdSuccesses.filter(item => item.tagged)) if (!released.has(identity(success))) released.set(identity(success), success);
@@ -69,12 +71,32 @@ export function deliveryMetrics({ deployments = [], releases = [], coverageStart
     const release = created.get(key);
     const createdAt = release ? time(release.observedAt) : 0;
     const row = { version: firstPrd.version, commit: firstPrd.commit.toLowerCase(), firstPrd: reference(firstPrd),
-      created: release ? { at: iso(createdAt), runId: release.runId || null, url: release.evidence?.[0]?.url || release.url || null } : null,
+      created: createdReference(release),
       firstTst: reference(firstSuccess('TST', firstPrd)), firstPre: reference(firstSuccess('PRE', firstPrd)),
       leadMs: release && firstPrd.at >= createdAt ? firstPrd.at - createdAt : null };
     leadTimes.push(row);
   }
   leadTimes.sort((a, b) => time(b.firstPrd.at) - time(a.firstPrd.at));
+
+  // Every tagged identity that reached a shared environment, with its first
+  // successful TST/PRE/PRD deployment and every completed attempt. A candidate that never reached PRD is
+  // replaced once a higher version has been deployed after it.
+  const byIdentity = new Map();
+  for (const item of attempts) {
+    if (item.environment === 'DEV' || !item.tagged) continue;
+    const key = identity(item);
+    if (!byIdentity.has(key)) byIdentity.set(key, { version: item.version, commit: item.commit.toLowerCase(),
+      created: createdReference(created.get(key)), tst: null, pre: null, prd: null, failed: [], deployments: [], first: item.at, last: item.at });
+    const row = byIdentity.get(key), stage = item.environment.toLowerCase();
+    if (item.status === 'succeeded' && !row[stage]) row[stage] = reference(item);
+    if (item.status === 'failed') row.failed.push({ environment: item.environment, ...reference(item) });
+    if (item.status === 'succeeded' || item.status === 'failed') row.deployments.push({ environment: item.environment, status: item.status, ...reference(item) });
+    row.last = Math.max(row.last, item.at);
+  }
+  const candidateRows = [...byIdentity.values()];
+  const candidates = candidateRows.map(({ first, last, ...row }) => ({ ...row, outcome: row.prd ? 'production'
+    : candidateRows.some(other => other.first > first && compareVersions(other.version, row.version) > 0) ? 'replaced' : 'in-progress',
+  lastAt: iso(last) }));
 
   // Consecutive failures belong to one interruption, measured from the first
   // failure until the next successful PRD deployment of any version.
@@ -141,6 +163,7 @@ export function deliveryMetrics({ deployments = [], releases = [], coverageStart
   return {
     generatedAt: iso(now), coverageStart: coverage ? iso(coverage) : null, windows,
     releases: leadTimes.filter(row => time(row.firstPrd.at) >= oldest),
+    candidates: candidates.filter(row => time(row.lastAt) >= oldest),
     failures: failures.filter(row => time(row.failed.at) >= oldest),
     rollbacks: rollbacks.filter(row => time(row.deployment.at) >= oldest),
   };

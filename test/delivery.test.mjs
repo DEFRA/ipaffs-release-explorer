@@ -78,6 +78,31 @@ test('lead time runs from recorded tag creation to the first successful PRD depl
   assert.deepEqual(period(data, 30).leadTime, { count: 2, notRecorded: 1, medianMs: 17 * HOUR, minMs: 4 * HOUR, maxMs: 30 * HOUR });
 });
 
+test('candidates record first stage successes and whether a later version replaced them', () => {
+  const data = metrics([
+    deployment(1, 'TST', '1.0.1', 'succeeded', 90),
+    deployment(1, 'PRE', '1.0.1', 'succeeded', 80),
+    deployment(1, 'PRD', '1.0.1', 'failed', 71),
+    deployment(1, 'PRD', '1.0.1', 'succeeded', 70, { attempt: 2 }),
+    deployment(2, 'TST', '1.0.2', 'succeeded', 60),
+    deployment(3, 'TST', '1.0.3', 'succeeded', 40),
+    deployment(4, 'TST', '1.0.4', 'succeeded', 5),
+    deployment(5, 'DEV', '1.0.5', 'succeeded', 2),
+  ], [created('1.0.1', 100)]);
+  const byVersion = Object.fromEntries(data.candidates.map(row => [row.version, row]));
+  assert.deepEqual(data.candidates.map(row => row.version), ['1.0.1', '1.0.2', '1.0.3', '1.0.4']);
+  assert.equal(byVersion['1.0.1'].outcome, 'production');
+  assert.equal(byVersion['1.0.1'].created.at, at(100));
+  assert.deepEqual([byVersion['1.0.1'].tst.at, byVersion['1.0.1'].pre.at, byVersion['1.0.1'].prd.at], [at(90), at(80), at(70)]);
+  assert.deepEqual(byVersion['1.0.1'].failed.map(row => [row.environment, row.at]), [['PRD', at(71)]]);
+  assert.deepEqual(byVersion['1.0.1'].deployments.map(row => [row.environment, row.status]),
+    [['TST', 'succeeded'], ['PRE', 'succeeded'], ['PRD', 'failed'], ['PRD', 'succeeded']]);
+  assert.equal(byVersion['1.0.2'].outcome, 'replaced');
+  assert.equal(byVersion['1.0.2'].created, null);
+  assert.equal(byVersion['1.0.3'].outcome, 'replaced');
+  assert.equal(byVersion['1.0.4'].outcome, 'in-progress');
+});
+
 test('releases without retained creation evidence are reported rather than given a lead time', () => {
   const data = metrics([deployment(1, 'PRD', '1.0.1', 'succeeded', 5)]);
   assert.equal(data.releases[0].created, null);
