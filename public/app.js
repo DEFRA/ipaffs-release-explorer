@@ -533,7 +533,7 @@ function secretHealthSummary(health, environment) {
     const parts = ['red', 'amber', 'green'].filter(key => counts[key]).map(key => `${counts[key]} ${key}`);
     if (parts.length) section.append(node('p', 'secret-health-counts', parts.join(' · ')));
   }
-  if (typeof health?.detail === 'string' && health.detail) section.append(node('p', 'secret-health-detail', health.detail));
+  if (['running', 'unavailable'].includes(reportState) && typeof health?.detail === 'string' && health.detail) section.append(node('p', 'secret-health-detail', health.detail));
   const fingerprintMismatches = Number.isSafeInteger(health?.fingerprintMismatches) && health.fingerprintMismatches > 0 ? health.fingerprintMismatches : 0;
   const fingerprintUnknown = Number.isSafeInteger(health?.fingerprintUnknown) && health.fingerprintUnknown > 0 ? health.fingerprintUnknown : 0;
   if (fingerprintMismatches || fingerprintUnknown) {
