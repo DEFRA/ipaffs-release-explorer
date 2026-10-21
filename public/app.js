@@ -936,8 +936,16 @@ function renderDelivery() {
   container.append(node('p', 'release-history-note', 'Measures use retained ADO records within the scan limit. Deleted runs, older retries and deployments outside these pipelines are not counted, and a successful deployment does not verify what is running now.'));
 }
 
-function activateTab(name) {
+const defaultTab = 'overview';
+
+function tabFromHash() {
+  const name = location.hash.slice(1);
+  return document.getElementById(`tab-${name}`)?.getAttribute('role') === 'tab' ? name : defaultTab;
+}
+
+function activateTab(name, updateUrl = true) {
   state.tab = name;
+  if (updateUrl && tabFromHash() !== name) history.pushState(null, '', name === defaultTab ? location.pathname + location.search : `#${name}`);
   document.querySelectorAll('[role="tab"]').forEach((tab) => {
     const active = tab.dataset.tab === name;
     tab.setAttribute('aria-selected', String(active));
@@ -1168,6 +1176,8 @@ tabs.forEach((tab, index) => {
     if (target) { event.preventDefault(); activateTab(target.dataset.tab); target.focus(); }
   });
 });
+window.addEventListener('popstate', () => activateTab(tabFromHash(), false));
+activateTab(tabFromHash(), false);
 $('close-detail').addEventListener('click', () => $('detail-dialog').close());
 $('detail-dialog').addEventListener('close', () => { state.detailRequest++; state.namespaceDetail = null; });
 $('detail-dialog').addEventListener('click', (event) => {
