@@ -30,6 +30,8 @@ helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explor
   > "$temp_dir/namespace-checks-disabled.yaml"
 helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
   "${values[@]}" --set ado.pipelines.scan=107 > "$temp_dir/scan-override.yaml"
+helm template ipaffs-release-explorer "$chart" --namespace ipaffs-release-explorer \
+  "${values[@]}" --set ado.pipelines.secretExpiry=108 > "$temp_dir/secret-expiry-override.yaml"
 dev_url_values=(
   --set-string devUrls.b2c=https://notifications.dev.example.test
   --set-string devUrls.b2b=https://notifications-int.dev.example.test/notifications
@@ -104,6 +106,8 @@ assert.notEqual(configChecksum(baseline), configChecksum(namespaceChecksDisabled
   'Changing namespace checks must trigger a rollout');
 assert(!resource(baseline, 'ConfigMap').includes('ADO_SCAN_PIPELINE_ID:'), 'Scan discovery must work without an override');
 assert.equal(configValue(read('scan-override.yaml'), 'ADO_SCAN_PIPELINE_ID'), '107');
+assert(!resource(baseline, 'ConfigMap').includes('ADO_SECRET_EXPIRY_PIPELINE_ID:'), 'Secret expiry discovery must work without an override');
+assert.equal(configValue(read('secret-expiry-override.yaml'), 'ADO_SECRET_EXPIRY_PIPELINE_ID'), '108');
 for (const name of ['DEV_B2C_URL', 'DEV_B2B_URL']) {
   assert.equal(configValue(baseline, name), '', 'Canonical DEV links must have no public defaults');
 }

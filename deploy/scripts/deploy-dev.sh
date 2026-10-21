@@ -12,7 +12,7 @@ for name in AKS_NAME AKS_RESOURCE_GROUP ACR_NAME NAMESPACE IDENTITY_RESOURCE_ID 
 done
 # Optional evidence pipeline IDs make deployment independent of ADO display names.
 # ADO leaves an undefined explicit env macro intact; only that exact macro is absent.
-for name in ADO_QA_DEV_PIPELINE_ID ADO_QA_TST_PIPELINE_ID ADO_SCAN_PIPELINE_ID; do
+for name in ADO_QA_DEV_PIPELINE_ID ADO_QA_TST_PIPELINE_ID ADO_SCAN_PIPELINE_ID ADO_SECRET_EXPIRY_PIPELINE_ID; do
   value="${!name:-}"
   # shellcheck disable=SC2016
   if [[ "$value" == '$('"${name}"')' ]]; then
@@ -42,7 +42,7 @@ for name in DEV_B2C_URL DEV_B2B_URL; do
   fi
 done
 for name in ADO_DEV_PIPELINE_ID ADO_CREATE_RELEASE_PIPELINE_ID ADO_RELEASE_PIPELINE_ID ADO_QA_PIPELINE_ID \
-  ADO_QA_DEV_PIPELINE_ID ADO_QA_TST_PIPELINE_ID ADO_SCAN_PIPELINE_ID; do
+  ADO_QA_DEV_PIPELINE_ID ADO_QA_TST_PIPELINE_ID ADO_SCAN_PIPELINE_ID ADO_SECRET_EXPIRY_PIPELINE_ID; do
   [[ -n "${!name}" ]] || continue
   if [[ ! "${!name}" =~ ^[1-9][0-9]{0,8}$ ]] || (( ${!name} > 100000000 )); then
     echo "${name} must be a positive pipeline ID no greater than 100000000." >&2
@@ -146,10 +146,11 @@ jq -n --arg repository "$repository" --arg digest "$digest" \
   --argjson release "$ADO_RELEASE_PIPELINE_ID" --argjson qa "$ADO_QA_PIPELINE_ID" \
   --argjson qaDev "${ADO_QA_DEV_PIPELINE_ID:-null}" --argjson qaTst "${ADO_QA_TST_PIPELINE_ID:-null}" \
   --argjson scan "${ADO_SCAN_PIPELINE_ID:-null}" \
+  --argjson secretExpiry "${ADO_SECRET_EXPIRY_PIPELINE_ID:-null}" \
   '{image:{repository:$repository,digest:$digest}, workloadIdentity:{clientId:$clientId,tenantId:$tenantId},
     ingress:{host:$ingressHost},
     devUrls:{b2c:$devB2cUrl,b2b:$devB2bUrl},
-    ado:{organization:$organization,project:$project,pipelines:{dev:$dev,createRelease:$createRelease,release:$release,qa:$qa,qaDev:$qaDev,qaTst:$qaTst,scan:$scan}}}' \
+    ado:{organization:$organization,project:$project,pipelines:{dev:$dev,createRelease:$createRelease,release:$release,qa:$qa,qaDev:$qaDev,qaTst:$qaTst,scan:$scan,secretExpiry:$secretExpiry}}}' \
   > "$DEPLOY_TEMP_DIR/runtime-values.json"
 chmod 600 "$DEPLOY_TEMP_DIR/runtime-values.json"
 helm upgrade --install ipaffs-release-explorer "${charts[0]}" \

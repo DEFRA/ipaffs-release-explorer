@@ -30,6 +30,7 @@ ado:
     qaDev: null
     qaTst: null
     scan: null
+    secretExpiry: null
   runsPerPipeline: 100
   cacheSeconds: 90
 

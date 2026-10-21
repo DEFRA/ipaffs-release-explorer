@@ -153,6 +153,47 @@ export class AdoClient {
     return response.data;
   }
 
+  async getSecretExpiryReport(buildId) {
+    if (!/^[1-9]\d*$/.test(String(buildId)) || !Number.isSafeInteger(Number(buildId))) throw new Error('Invalid report build ID');
+    const { data } = await this.get(`build/builds/${buildId}/artifacts`);
+    if (!Array.isArray(data?.value)) throw new AdoError('invalid_response', 'Azure DevOps returned an unexpected artifact list.');
+    const artifacts = data.value.filter(artifact => artifact?.name === 'secret-expiry-all');
+    if (!artifacts.length) return null;
+    const artifact = artifacts[0];
+    const blobId = value => typeof value === 'string' && /^[a-f0-9]{66}$/i.test(value);
+    if (artifacts.length !== 1 || artifact.resource?.type !== 'PipelineArtifact' || !blobId(artifact.resource.data)) {
+      throw new AdoError('invalid_response', 'Azure DevOps returned an unsupported expiry artifact.');
+    }
+    // PipelineArtifact manifests identify a single JSON blob. Construct both
+    // Get File requests inside the configured project; never follow artifact
+    // URLs, signed URLs, redirects or download/extract an archive.
+    // https://learn.microsoft.com/rest/api/azure/devops/build/artifacts/get-file?view=azure-devops-rest-7.1
+    const file = async (id, name, limit) => {
+      const url = new URL(`build/builds/${buildId}/artifacts`, this.base);
+      url.searchParams.set('api-version', '7.1');
+      url.searchParams.set('artifactName', 'secret-expiry-all');
+      url.searchParams.set('fileId', id);
+      url.searchParams.set('fileName', name);
+      return (await this.#request(url, { accept: 'application/octet-stream', text: false, limit })).data;
+    };
+    const manifest = await file(artifact.resource.data, 'manifest', 1024 * 1024);
+    if (!manifest || manifest.manifestFormat !== '1.1.0' || !Array.isArray(manifest.items)
+      || !Array.isArray(manifest.manifestReferences) || manifest.manifestReferences.length) {
+      throw new AdoError('invalid_response', 'Azure DevOps returned an unsupported expiry artifact manifest.');
+    }
+    const entries = manifest.items.filter(item => item?.path === '/report.json');
+    const blob = entries[0]?.blob;
+    if (entries.length !== 1 || !blobId(blob?.id) || !Number.isSafeInteger(blob.size)
+      || blob.size <= 0 || blob.size > 4 * 1024 * 1024) {
+      throw new AdoError('invalid_response', 'Azure DevOps returned an invalid expiry report entry.');
+    }
+    const report = await file(blob.id, 'report.json', 4 * 1024 * 1024);
+    if (!report || typeof report !== 'object' || Array.isArray(report)) {
+      throw new AdoError('invalid_response', 'Azure DevOps returned an unexpected expiry report.');
+    }
+    return report;
+  }
+
   async #request(url, { accept, text, limit }) {
     const authorization = await this.authorization();
     for (let attempt = 0; attempt < 2; attempt += 1) {
