@@ -706,7 +706,7 @@ function percentage(rate) {
   return Number.isFinite(rate) ? `${new Intl.NumberFormat('en-GB', { maximumFractionDigits: 1 }).format(rate * 100)}%` : 'No attempts';
 }
 
-function plural(count, word) { return `${count} ${word}${count === 1 ? '' : 's'}`; }
+function plural(count, word, many = `${word}s`) { return `${count} ${count === 1 ? word : many}`; }
 
 function deliveryMetric(label, value, summary, definition) {
   return append(node('article', 'delivery-metric'), node('h3', 'delivery-metric-label', label),
@@ -732,6 +732,133 @@ function deliveryTable(title, description, headings, rows, emptyTitle, emptyText
   }
   section.append(wrap);
   return section;
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const CHART_WIDTH = 960;
+const DAY_MS = 86400000;
+const STAGES = [['tst', 'TST'], ['pre', 'PRE'], ['prd', 'Production']];
+
+function svgNode(tag, className, attributes = {}, text) {
+  const element = document.createElementNS(SVG_NS, tag);
+  if (className) element.setAttribute('class', className);
+  Object.entries(attributes).forEach(([name, value]) => element.setAttribute(name, String(value)));
+  if (text !== undefined && text !== null) element.textContent = String(text);
+  return element;
+}
+
+// SVG has no native tooltip element; <title> gives hover text and an accessible name.
+function svgTitled(element, title) {
+  element.append(svgNode('title', '', {}, title));
+  return element;
+}
+
+function svgLink(child, value) {
+  const url = safeUrl(value);
+  if (!url) return child;
+  return append(svgNode('a', 'chart-link', { href: url, target: '_blank', rel: 'noopener noreferrer' }), child);
+}
+
+function chartFrame(height) {
+  return svgNode('svg', 'delivery-chart', { viewBox: `0 0 ${CHART_WIDTH} ${height}`, role: 'img' });
+}
+
+function chartLegend(items) {
+  return append(node('div', 'chart-legend'), ...items.map(([className, label]) => append(node('span'), node('i', `chart-swatch ${className}`), document.createTextNode(label))));
+}
+
+function chartSection(title, description, legend, chart, emptyTitle, emptyText) {
+  const heading = append(node('div'), node('h2', '', title), node('p', '', description));
+  const section = append(node('section', 'surface delivery-section'), append(node('div', 'surface-heading chart-heading'), append(heading, legend)));
+  section.append(chart ? append(node('div', 'chart-wrap'), chart) : empty(emptyTitle, emptyText));
+  return section;
+}
+
+function dayTicks(start, end) {
+  const days = (end - start) / DAY_MS;
+  const step = [1, 2, 7, 14, 28].find((value) => days / value <= 9) || Math.ceil(days / 9);
+  const ticks = [];
+  for (let tick = Math.ceil(start / DAY_MS) * DAY_MS; tick <= end; tick += step * DAY_MS) ticks.push(tick);
+  return ticks;
+}
+
+function candidateTimeline(candidates, from, generatedAt) {
+  const end = Math.max(Date.parse(generatedAt) || 0, from) + DAY_MS / 4;
+  const rows = candidates.map((row) => ({ row, points: array(row.deployments).map((item) => ({ ...item, at: Date.parse(item.at) })).filter((item) => item.at >= from && item.at <= end) }))
+    .filter(({ points }) => points.length);
+  if (!rows.length) return null;
+  const start = from;
+  const left = 96, right = 16, rowHeight = 26, top = 10, plotHeight = rows.length * rowHeight;
+  const x = (value) => left + (value - start) / (end - start) * (CHART_WIDTH - left - right);
+  const svg = chartFrame(top + plotHeight + 30);
+  svg.setAttribute('aria-label', `Timeline of ${plural(rows.length, 'release candidate')} through TST, PRE and production`);
+  const tickFormat = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
+  dayTicks(start, end).forEach((tick) => {
+    svg.append(svgNode('line', 'chart-grid', { x1: x(tick), x2: x(tick), y1: top - 4, y2: top + plotHeight }));
+    svg.append(svgNode('text', 'chart-axis', { x: x(tick), y: top + plotHeight + 20, 'text-anchor': 'middle' }, tickFormat.format(tick)));
+  });
+  const labels = { TST: 'TST', PRE: 'PRE', PRD: 'Production' };
+  rows.forEach(({ row, points }, index) => {
+    const y = top + index * rowHeight + rowHeight / 2;
+    const outcome = { production: 'Reached production', replaced: 'Replaced by a later version before production', 'in-progress': 'Not yet in production' }[row.outcome] || '';
+    svg.append(svgTitled(svgNode('text', `chart-row-label ${row.outcome}`, { x: left - 12, y: y + 4, 'text-anchor': 'end' }, row.version), `${row.version} · ${shortCommit(row.commit)} · ${outcome}`));
+    // A candidate first deployed before the period continues from the left edge.
+    const first = Math.min(...array(row.deployments).map((item) => Date.parse(item.at))), last = points.at(-1).at;
+    const spanStart = Math.max(start, first);
+    if (last > spanStart) svg.append(svgNode('line', `chart-span ${row.outcome}`, { x1: x(spanStart), x2: x(last), y1: y, y2: y }));
+    points.forEach((point) => {
+      const failed = point.status === 'failed';
+      const title = `${row.version} · ${labels[point.environment] || point.environment} ${failed ? 'deployment failed' : 'deployed'} · ${date(point.at)}${point.runId ? ` · Run #${point.runId}${point.attempt > 1 ? `, attempt ${point.attempt}` : ''}` : ''}`;
+      const mark = failed ? svgNode('circle', 'chart-failed', { cx: x(point.at), cy: y, r: 5.5 })
+        : svgNode('circle', `chart-dot ${point.environment.toLowerCase()}`, { cx: x(point.at), cy: y, r: 5 });
+      svg.append(svgLink(svgTitled(mark, title), point.url));
+    });
+  });
+  return svg;
+}
+
+function leadTimeChart(releases, medianMs) {
+  if (!releases.length) return null;
+  const rows = [...releases].sort((a, b) => Date.parse(a.firstPrd.at) - Date.parse(b.firstPrd.at));
+  const maxDays = Math.max(1, ...rows.map((row) => (row.leadMs || 0) / DAY_MS));
+  const step = [1, 2, 5, 7, 10, 14, 30].find((value) => maxDays / value <= 10) || Math.ceil(maxDays / 10);
+  const domain = Math.ceil(maxDays / step) * step;
+  const left = 96, right = 90, rowHeight = 30, top = 22, plotHeight = rows.length * rowHeight;
+  const x = (ms) => left + ms / (domain * DAY_MS) * (CHART_WIDTH - left - right);
+  const svg = chartFrame(top + plotHeight + 46);
+  svg.setAttribute('aria-label', `Lead time of ${plural(rows.length, 'production release')}, split by stage`);
+  for (let tick = 0; tick <= domain; tick += step) {
+    svg.append(svgNode('line', 'chart-grid', { x1: x(tick * DAY_MS), x2: x(tick * DAY_MS), y1: top - 4, y2: top + plotHeight }));
+    svg.append(svgNode('text', 'chart-axis', { x: x(tick * DAY_MS), y: top + plotHeight + 18, 'text-anchor': 'middle' }, tick));
+  }
+  svg.append(svgNode('text', 'chart-axis', { x: left + (CHART_WIDTH - left - right) / 2, y: top + plotHeight + 38, 'text-anchor': 'middle' }, 'Days from release tag to production'));
+  rows.forEach((row, index) => {
+    const y = top + index * rowHeight + rowHeight / 2;
+    svg.append(svgTitled(svgNode('text', 'chart-row-label production', { x: left - 12, y: y + 4, 'text-anchor': 'end' }, row.version), `${row.version} · ${shortCommit(row.commit)}`));
+    const created = Date.parse(row.created?.at);
+    if (row.leadMs === null || !Number.isFinite(created)) {
+      svg.append(svgNode('text', 'chart-axis', { x: left + 4, y: y + 4 }, 'Tag creation not retained, so lead time is not recorded'));
+      return;
+    }
+    // Each segment ends at the stage it reached; a missing stage merges into the next one.
+    let from = 0, previous = 'Tag';
+    STAGES.forEach(([key, label]) => {
+      const reference = key === 'prd' ? row.firstPrd : key === 'pre' ? row.firstPre : row.firstTst;
+      const reached = Date.parse(reference?.at);
+      if (!Number.isFinite(reached)) return;
+      const to = Math.min(row.leadMs, Math.max(from, reached - created));
+      svg.append(svgLink(svgTitled(svgNode('rect', `chart-segment ${key === 'tst' ? 'tag' : key}`, { x: x(from), y: y - 7, width: Math.max(1.5, x(to) - x(from)), height: 14, rx: 2 }),
+        `${row.version} · ${previous} → ${label} · ${duration(to - from)}`), reference.url));
+      from = to;
+      previous = label;
+    });
+    svg.append(svgNode('text', 'chart-value', { x: CHART_WIDTH - right + 12, y: y + 4 }, duration(row.leadMs)));
+  });
+  if (Number.isFinite(medianMs)) {
+    svg.append(svgNode('line', 'chart-median', { x1: x(medianMs), x2: x(medianMs), y1: top - 6, y2: top + plotHeight }));
+    svg.append(svgNode('text', 'chart-median-label', { x: x(medianMs), y: top - 10, 'text-anchor': 'middle' }, `Median ${duration(medianMs)}`));
+  }
+  return svg;
 }
 
 function renderDelivery() {
@@ -774,21 +901,26 @@ function renderDelivery() {
       `${failure.failed} failed of ${failure.failed + failure.succeeded} PRD attempts · ${plural(failure.rollbacks, 'rollback')}`,
       'Failed PRD deployment stages. Production incidents are not observed; canceled attempts are excluded.'),
     deliveryMetric('Time to restore', recovery.count ? duration(recovery.medianMs) : 'Not recorded',
-      recovery.count || recovery.unresolved ? `Median of ${plural(recovery.count, 'recovery')}${recovery.unresolved ? ` · ${recovery.unresolved} not yet recovered` : ''}` : 'No failed PRD deployments in this period',
+      recovery.count || recovery.unresolved ? `Median of ${plural(recovery.count, 'recovery', 'recoveries')}${recovery.unresolved ? ` · ${recovery.unresolved} not yet recovered` : ''}` : 'No failed PRD deployments in this period',
       'First failed PRD deployment → next successful PRD deployment of any version.')));
+
+  const candidates = array(delivery.candidates).filter((row) => Date.parse(row.lastAt) >= from);
+  container.append(chartSection('Every release candidate, TST to production',
+    'One row per release tag deployed in this period, with every completed deployment attempt. Grey rows never reached production because a later version replaced them. The gaps between stages are soak time waiting for the next slot. Select a point to open its ADO run.',
+    chartLegend([['tst', 'TST'], ['pre', 'PRE'], ['prd', 'Production'], ['failed', 'Failed deployment']]),
+    candidateTimeline(candidates, from, delivery.generatedAt),
+    'No release candidates', 'No release tag was deployed to TST, PRE or PRD within the scanned history for this period.'));
+
+  container.append(chartSection('Lead time per production release',
+    'Time from the release tag being created to its first successful PRD deployment, split by where it was spent. The dashed line marks the median. Commit and merge times are not available, so time before the tag is not included.',
+    chartLegend([['tag', 'Tag → TST'], ['pre', 'TST → PRE'], ['prd', 'PRE → production']]),
+    leadTimeChart(array(delivery.releases).filter((row) => within(row.firstPrd)), lead.medianMs),
+    'No first PRD deployments', 'No release reached PRD for the first time within the scanned history for this period.'));
 
   container.append(deliveryTable('Deployments by environment', 'Canonical namespaces only. Each stage attempt counts once; DEV branch namespaces are excluded.',
     ['Environment', 'Succeeded', 'Failed', 'Canceled', 'Failure rate'],
     array(period.environments).map((row) => [node('span', 'cell-primary', row.environment), row.succeeded, row.failed, row.canceled, percentage(row.rate)]),
     'No deployment attempts', 'No deployment attempts are recorded in the scanned history for this period.'));
-
-  container.append(deliveryTable('Release lead times', 'Releases whose first successful PRD deployment falls in this period. Select a date to open its ADO run.',
-    ['Release', 'Tag created', 'First TST', 'First PRE', 'First PRD', 'Lead time'],
-    array(delivery.releases).filter((row) => within(row.firstPrd)).map((row) => [
-      append(node('td'), node('span', 'cell-primary', row.version), node('span', 'cell-secondary mono', shortCommit(row.commit))),
-      deliveryTime(row.created), deliveryTime(row.firstTst), deliveryTime(row.firstPre), deliveryTime(row.firstPrd),
-      node('span', 'cell-primary', row.leadMs === null ? 'Not recorded' : duration(row.leadMs))]),
-    'No first PRD deployments', 'No release reached PRD for the first time within the scanned history for this period.'));
 
   container.append(deliveryTable('Failed PRD deployments', 'Consecutive failures are grouped until the next successful PRD deployment.',
     ['Failed', 'Version', 'Failed attempts', 'Recovered', 'Time to restore'],
