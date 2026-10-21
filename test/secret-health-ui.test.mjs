@@ -44,6 +44,7 @@ test('environment health uses colour plus words, report timestamp and an accessi
   assert.equal(result.attributes['aria-label'], 'Secret and certificate health for DEV');
   assert.match(result.textContent, /Secrets & certificates\s+Healthy/);
   assert.match(result.textContent, /15 green/);
+  assert.doesNotMatch(result.textContent, /All reported expiry dates/);
   assert.match(result.textContent, /Last updated.*21 Oct 2026/);
   assert.equal(hasGreen(result), true);
   const time = descendants(result).find(child => child.tagName === 'time');
@@ -107,7 +108,7 @@ test('report links use the existing ADO restriction and detail is rendered as pl
     assert.equal(descendants(renderer().render(health({ url }))).some(child => child.tagName === 'a'), false);
   }
   const detail = '<img src=x onerror=alert(1)> & report metadata';
-  const result = renderer().render(health({ detail }));
+  const result = renderer().render(health({ state: 'unavailable', detail }));
   assert.equal(descendants(result).find(child => child.className === 'secret-health-detail').textContent, detail);
   assert.equal(descendants(result).some(child => ['img', 'script'].includes(child.tagName)), false);
 });
