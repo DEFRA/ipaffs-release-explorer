@@ -12,12 +12,16 @@ export function sampleDashboard() {
   const qaRun = (id, environment, result, hours, counts = null) => ({
     id, environment, pipelineId: environment === 'DEV' ? 201 : 202,
     status: result ? 'completed' : 'inProgress', result,
-    queuedAt: at(hours + 0.5), finishedAt: result ? at(hours) : null,
+    queuedAt: at(hours + 0.5), startedAt: at(hours + 0.45), finishedAt: result ? at(hours) : null,
     url: url(id), resultsUrl: `${url(id)}&view=ms.vss-test-web.build-test-results-tab`,
     summary: counts ? { availability: 'available', ...counts, total: counts.passed + counts.failed + counts.skipped + counts.other,
       executed: counts.passed + counts.failed + counts.other, passPercentage: 100 * counts.passed / (counts.passed + counts.failed + counts.other) } : null,
   });
   const linkedQa = (...runs) => ({ state: 'linked', latest: runs[0], runs });
+  const environmentQa = (...runs) => {
+    const records = runs.map(run => ({ ...run, scope: 'environment', revisionVerified: false }));
+    return { state: records.length ? 'recorded' : 'not-recorded', latest: records[0] || null, runs: records };
+  };
   const vulnerability = (id, state, hours, counts = null, images = null, distinct = null) => ({
     state, counts, distinct, images, scannedAt: ['complete', 'partial'].includes(state) ? at(hours) : null,
     runId: id, url: id ? `${url(id)}&view=results` : null,
@@ -73,12 +77,16 @@ export function sampleDashboard() {
     ],
     environments: [
       { name: 'DEV', namespace: 'dev', lastSuccess: dev, latestAttempt: dev, vulnerability: masterScan,
+        qa: environmentQa(dev.qa.latest),
         secretHealth: secretHealth('green', { green: 15, amber: 0, red: 0 }, 'All reported expiry dates are more than 60 days away.') },
       { name: 'TST', namespace: 'tst', lastSuccess: tst, latestAttempt: tst,
+        qa: environmentQa(qaRun(305, 'TST', 'succeeded', 0.5, { passed: 376, failed: 0, skipped: 16, other: 0 }), tst.qa.latest),
         secretHealth: secretHealth('amber', { green: 13, amber: 2, red: 0 }, 'Two reported expiry dates are within 30–60 days.') },
       { name: 'PRE', namespace: 'pre', lastSuccess: pre, latestAttempt: pre,
+        qa: environmentQa(),
         secretHealth: secretHealth('red', { green: 13, amber: 1, red: 1 }, 'One item expires in fewer than 30 days.') },
       { name: 'PRD', namespace: 'prd', lastSuccess: previousPrd, latestAttempt: deploy(100, 'PRD', '4.2.0', 'pending', 0),
+        qa: environmentQa(),
         secretHealth: { state: 'unavailable', colour: 'grey', counts: null, checkedAt: null, stale: false,
           detail: 'The environment report could not be read.', runId: 406,
           url: `${url(406)}&view=ms.vss-build-web.run-extensions-tab`, fingerprintMismatches: 0, fingerprintUnknown: 0 } },

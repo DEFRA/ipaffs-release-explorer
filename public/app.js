@@ -392,22 +392,42 @@ function qaPresentation(qa) {
     denominator: `${summary.passed} passed out of ${summary.executed} executed tests. ${summary.skipped} skipped tests excluded from the pass percentage.` };
 }
 
-function qaSummary(deployment, { compact = false, run = deployment?.qa?.latest } = {}) {
-  const presentation = qaPresentation(run);
+function qaRunTime(run) {
+  const valid = value => typeof value === 'string' && Number.isFinite(Date.parse(value));
+  const active = ['inprogress', 'running', 'queued', 'notstarted', 'pending'].includes(normalizedStatus(run.status));
+  const [label, value] = !active && valid(run.finishedAt) ? ['Finished', run.finishedAt]
+    : valid(run.startedAt) ? ['Started', run.startedAt]
+    : valid(run.queuedAt) ? ['Queued', run.queuedAt] : [];
+  if (!value) return node('p', 'qa-run-meta', 'Test time not recorded');
+  const timestamp = node('time', '', date(value, true));
+  timestamp.setAttribute('datetime', value);
+  return append(node('p', 'qa-run-meta'), node('span', '', `${label} `), timestamp);
+}
+
+function qaSummary(deployment, { compact = false, run = deployment?.qa?.latest, scope = 'deployment' } = {}) {
+  const environmentScope = scope === 'environment';
+  const presentation = !run && environmentScope
+    ? deployment?.qa?.state === 'unavailable'
+      ? { label: 'Tests unavailable', tone: 'neutral', detail: 'Test history could not be loaded for this environment.' }
+      : { label: 'No tests recorded', tone: 'neutral', detail: 'No test run recorded for this environment in the scanned history.' }
+    : qaPresentation(run);
+  const subject = `${deployment?.environment || run?.environment || 'this environment'}${!environmentScope && deployment?.version ? ` ${deployment.version}` : ''}`;
   const section = node('section', `qa-summary${compact ? ' qa-summary-compact' : ''}`);
-  section.setAttribute('aria-label', `Test results for ${deployment?.environment || 'this environment'} ${deployment?.version || ''}`.trim());
-  const heading = append(node('div', 'qa-heading'), node('span', 'qa-label', 'Tests'));
+  section.setAttribute('aria-label', `${environmentScope ? 'Latest test results' : 'Test results'} for ${subject}`);
+  const heading = append(node('div', 'qa-heading'), node('span', 'qa-label', environmentScope ? 'Latest tests' : 'Tests'));
   if (run) heading.append(badge(recordStatus(run), presentation.tone));
   const metric = node('p', `qa-metric qa-${presentation.tone}`, presentation.label);
   if (presentation.denominator) metric.title = presentation.denominator;
   append(section, heading, metric, node('p', 'qa-counts', presentation.detail));
   if (run) {
+    section.append(qaRunTime(run));
+    if (environmentScope) section.append(node('p', 'qa-run-meta', `Latest run against ${subject}`));
     const hasResults = run.summary?.availability === 'available';
     const link = externalLink(hasResults ? 'View test results ↗' : `View test run #${run.id} ↗`, hasResults ? run.resultsUrl || run.url : run.url, 'qa-results-link');
-    link.setAttribute('aria-label', `${hasResults ? 'View test results' : 'View test run'} for ${deployment?.environment || run.environment || 'environment'} ${deployment?.version || ''}, QA run ${run.id} (opens in a new tab)`);
+    link.setAttribute('aria-label', `${hasResults ? 'View test results' : 'View test run'} for ${subject}, QA run ${run.id} (opens in a new tab)`);
     section.append(link);
     if (!compact) {
-      append(section, node('p', 'qa-run-meta', `QA run #${run.id} · ${date(run.finishedAt || run.queuedAt, true)}`));
+      section.append(node('p', 'qa-run-meta', `QA run #${run.id}`));
       if (presentation.denominator) section.append(node('p', 'qa-run-meta', presentation.denominator));
     }
   }
@@ -570,7 +590,7 @@ function renderEnvironments() {
     } else {
       append(main, node('p', 'version-empty', 'No deployment found'), node('p', 'card-commit', 'Within scanned history'), badge('unknown'), node('p', 'deployment-time', 'No successful ADO record'));
     }
-    append(card, main, qaSummary(deployment, { compact: true }), vulnerabilitySummary(environment.vulnerability ?? deployment?.vulnerability, { compact: true }), secretHealthSummary(environment.secretHealth, environment.name));
+    append(card, main, qaSummary({ environment: environment.name, qa: environment.qa }, { compact: true, scope: 'environment' }), vulnerabilitySummary(environment.vulnerability ?? deployment?.vulnerability, { compact: true }), secretHealthSummary(environment.secretHealth, environment.name));
     const footer = node('div', 'card-footer');
     const latest = environment.latestAttempt;
     if (latest && (!deployment || latest.runId !== deployment.runId || latest.attempt !== deployment.attempt || normalizedStatus(recordStatus(latest)) !== 'succeeded')) {

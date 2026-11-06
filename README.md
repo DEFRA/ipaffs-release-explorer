@@ -112,6 +112,7 @@ permissions or pipeline changes are needed for this view.
 | Approvals and progress | Native stage results, including incomplete release runs | Overall run status is not the result of every environment. |
 | Delivery metrics | Deployment stage outcomes and successful Create Release task logs | Pipeline outcomes only; incidents and commit times are not observed. |
 | Linked QA result | Child run ID in the existing QA trigger log, then the child's current ADO result | The request does not record the exact manifest revision tested. |
+| Latest environment tests | Latest queued run from the fixed DEV/TST QA pipelines, including scheduled and manual runs, or established deployment links | Environment results do not establish which release or manifest revision was tested. |
 | Failures and reruns | Timeline outcomes and attempts | Older attempts may not be retained; uncertainty is shown rather than guessed. |
 
 Each result includes an ADO link for inspection. The dashboard keeps the last
@@ -189,6 +190,20 @@ an explicit ADO validation error and a successfully retrieved empty timeline.
 The failed run remains available through its evidence link. Failed runs with
 deployment records still contribute their actual results; missing history or
 access failures continue to produce warnings.
+
+Environment cards show **Latest tests** independently of the last recorded
+deployment. The newest queued run wins, including failed, canceled and active
+runs; an older passing result does not replace it. The cards show the run's
+finish date and time with the browser's timezone. Active runs show a labelled
+start or queue time; missing dates and unavailable history remain explicit.
+Published summaries are read for the latest environment runs and for existing
+deployment links, with each run fetched once per snapshot.
+
+Release, deployment and DEV namespace details retain only their established
+deployment-linked tests. Scheduled or manual runs and their selected resource
+names do not prove which release was tested, and do not replace those historical
+links. Environment pipeline identities use the configured DEV/TST overrides or
+exact-name discovery described in the deployment guide.
 
 For a linked QA run that ADO reports as not found, the app reads the current
 project retention policy through the Build API. If retained QA timestamps are

@@ -29,13 +29,13 @@ export function createDashboardService(config, client, { now = Date.now, namespa
         if (result.limited || matches.length !== 1) throw new Error('QA pipeline was not uniquely identified');
         return [kind, matches[0].id];
       } catch {
-        warnings.push({ code: 'qa_pipeline_unavailable', message: `${pipeline.name} could not be identified; its test evidence is unavailable in this scan.` });
+        warnings.push({ code: 'qa_pipeline_unavailable', environment: kind === 'qaDev' ? 'DEV' : 'TST', message: `${pipeline.name} could not be identified; its test evidence is unavailable in this scan.` });
         return null;
       }
     }));
-    const extraPipelines = qaPipelines.filter(Boolean).filter(([, id], index, entries) => {
+    const extraPipelines = qaPipelines.filter(Boolean).filter(([kind, id], index, entries) => {
       if (Object.values(config.pipelines).includes(id) || entries.some((entry, other) => other !== index && entry[1] === id)) {
-        warnings.push({ code: 'qa_pipeline_conflict', message: 'QA pipeline configuration overlaps another pipeline; ambiguous test evidence has been excluded.' });
+        warnings.push({ code: 'qa_pipeline_conflict', environment: kind === 'qaDev' ? 'DEV' : 'TST', message: 'QA pipeline configuration overlaps another pipeline; ambiguous test evidence has been excluded.' });
         return false;
       }
       return true;
@@ -49,8 +49,8 @@ export function createDashboardService(config, client, { now = Date.now, namespa
         };
       } catch (error) {
         if (!['qaDev', 'qaTst'].includes(kind)) throw error;
-        warnings.push({ code: 'qa_history_unavailable', message: `${kind === 'qaDev' ? 'DEV' : 'TST'} QA history is unavailable; no test outcome has been inferred.` });
-        return { kind, items: [], limited: false };
+        warnings.push({ code: 'qa_history_unavailable', environment: kind === 'qaDev' ? 'DEV' : 'TST', message: `${kind === 'qaDev' ? 'DEV' : 'TST'} QA history is unavailable; no test outcome has been inferred.` });
+        return { kind, items: [], limited: false, unavailable: true };
       }
     }));
     const builds = lists.flatMap(list => list.items.map(build => ({ ...build, _kind: list.kind })));
@@ -154,15 +154,19 @@ export function createDashboardService(config, client, { now = Date.now, namespa
       retrievedRuns: builds.length,
       limited: lists.some(list => list.limited),
       scope: `Up to ${config.runsPerPipeline} recent runs per pipeline; older or deleted history is outside this scan.`,
-      pipelines: lists.map(list => ({ kind: list.kind, count: list.items.length, limited: list.limited })),
+      pipelines: lists.map(list => ({ kind: list.kind, count: list.items.length, limited: list.limited,
+        ...(list.unavailable ? { unavailable: true } : {}),
+      })),
       apiRequests: client.requests - callsBefore,
     };
     const dashboardInput = { builds, details, environments, environmentRecords, organization: config.organization, project: config.project, fetchedAt, limits, warnings, qaAvailability, devUrls: config.devUrls };
-    // Resolve provenance first. Unrelated nightly/manual runs do not need a
-    // result lookup and must not be displayed against a deployment/version.
+    // Resolve deployment provenance and latest environment runs first. Only the
+    // latest environment run needs a summary in addition to linked history.
     const provisional = buildDashboard(dashboardInput);
     const qaSummaries = new Map();
-    const linkedIds = new Set(provisional.runs.flatMap(run => run.qaLinks.map(link => Number(link.id)))
+    const linkedIds = new Set([...provisional.runs.flatMap(run => run.qaLinks.map(link => Number(link.id))),
+      ...provisional.environments.flatMap(environment => environment.qa.latest ? [environment.qa.latest.id] : []),
+    ]
       .filter(id => builds.some(build => Number(build.id) === id && ['qa', 'qaDev', 'qaTst'].includes(build._kind))));
     await mapConcurrent([...linkedIds], 4, async id => {
       try {
