@@ -426,7 +426,7 @@ function attachQaEvidence({ builds, runsById, kindById, deployments, getDetail, 
     if (!marker) continue;
     const link = { id: child.id, pipelineId: child.pipelineId, status: child.status, result: child.result,
       abandonment: child.abandonment,
-      queuedAt: child.queuedAt, finishedAt: child.finishedAt, url: child.url,
+      queuedAt: child.queuedAt, startedAt: child.startedAt, finishedAt: child.finishedAt, url: child.url,
       revisionVerified: false, evidence: [evidence('ADO deployment completion trigger', child.url, 'run'),
         evidence(`Successful ${environment} QA readiness stage`, recordUrl(parent, marker))] };
     attach(deployment, link);
@@ -462,6 +462,29 @@ function attachQaEvidence({ builds, runsById, kindById, deployments, getDetail, 
     deployment.qa.latest = deployment.qa.runs[0] || null;
     deployment.qa.state = deployment.qa.latest ? 'linked' : 'not-linked';
   }
+}
+
+// Fixed-environment pipelines also run on schedules and by hand. Their results
+// describe the environment, without establishing a link to a release/commit.
+function environmentQa(name, runs, kindById, deployments, qaSummaries, warnings) {
+  if (warnings.some(warning => warning.environment === name
+    && ['qa_pipeline_unavailable', 'qa_pipeline_conflict', 'qa_history_unavailable'].includes(warning.code))) {
+    return { state: 'unavailable', latest: null, runs: [] };
+  }
+  const kind = { DEV: 'qaDev', TST: 'qaTst' }[name];
+  const fixed = kind ? runs.filter(run => kindById.get(run.id) === kind).map(run => ({
+    id: run.id, pipelineId: run.pipelineId, status: run.status, result: run.result,
+    abandonment: run.abandonment, queuedAt: run.queuedAt, startedAt: run.startedAt,
+    finishedAt: run.finishedAt, url: run.url, resultsUrl: testResultsUrl(run.url),
+    summary: qaSummaries.get(run.id) || qaSummaries.get(String(run.id)) || null,
+    evidence: [evidence(`Fixed ${name} QA pipeline`, run.url, 'run')],
+  })) : [];
+  const linked = deployments.filter(item => item.environment === name && item.namespace === name.toLowerCase())
+    .flatMap(item => item.qa.runs);
+  const candidates = [...new Map([...linked, ...fixed].map(run => [run.id, {
+    ...run, environment: name, scope: 'environment', revisionVerified: false,
+  }])).values()].sort((a, b) => time(b.queuedAt) - time(a.queuedAt) || b.id - a.id);
+  return { state: candidates.length ? 'recorded' : 'not-recorded', latest: candidates[0] || null, runs: candidates };
 }
 
 export function buildDashboard({ builds = [], details = new Map(), environments = [], environmentRecords = [], organization = '', project = '', fetchedAt = new Date().toISOString(), limits = {}, warnings = [], qaAvailability = new Map(), qaSummaries = new Map(), devUrls = null } = {}) {
@@ -506,7 +529,8 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
       const childRun = runsById.get(child.id);
       run.qaLinks.push({ ...child, status: childRun?.status || 'unknown', result: childRun?.result || null,
         abandonment: childRun?.abandonment || null,
-        queuedAt: childRun?.queuedAt || child.queuedAt || null, finishedAt: childRun?.finishedAt || child.finishedAt || null,
+        queuedAt: childRun?.queuedAt || child.queuedAt || null, startedAt: childRun?.startedAt || null,
+        finishedAt: childRun?.finishedAt || child.finishedAt || null,
         ...(!childRun && qaAvailability.has(child.id) ? { availability: qaAvailability.get(child.id) } : {}),
         url: childRun?.url || runUrl({ id: child.id }, organization, project), revisionVerified: false,
         resultsUrl: testResultsUrl(childRun?.url || runUrl({ id: child.id }, organization, project)),
@@ -555,7 +579,10 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
   }).sort(versionDescending);
   for (const release of releases) release.progress = candidateProgress(release, runs, allDeployments, getDetail, runsById, kindById);
   const previousReleases = previousReleaseHistory(runs, allDeployments, runsById, kindById);
-  const envRows = CANONICAL.map(name => ({ name, namespace: name.toLowerCase(), ...lastStates(allDeployments.filter(item => item.environment === name && item.namespace === name.toLowerCase()), runsById) }));
+  const envRows = CANONICAL.map(name => ({ name, namespace: name.toLowerCase(),
+    ...lastStates(allDeployments.filter(item => item.environment === name && item.namespace === name.toLowerCase()), runsById),
+    qa: environmentQa(name, runs, kindById, allDeployments, qaSummaries, warnings),
+  }));
   attachReleaseComparisons(releases, envRows, [
     ...releaseCandidates,
     ...runs.filter(run => kindById.get(run.id) === 'release' && taggedVersion(run.sourceRef)

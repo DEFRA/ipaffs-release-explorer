@@ -66,6 +66,78 @@ test('manual, scheduled and unrelated resource selections cannot claim version-s
   }
 });
 
+test('newer scheduled TST results replace environment results without rewriting deployment or release history', () => {
+  const passing = { ...available, passed: 9, failed: 0, passPercentage: 100 };
+  const records = [stage('TST'), job('TST'), marker('TST'), stage('PRD'), job('PRD')];
+  const scheduled = child(12, 'TST', { reason: 'schedule', queueTime: at(30), startTime: at(31), finishTime: at(55),
+    buildNumber: '3.9.0-20350315.1', result: 'succeeded' });
+  const data = dashboard([parent(1, 'TST'), child(11, 'TST', { result: 'failed' }), scheduled],
+    [[1, details('TST', { timeline: { records } })]], { qaSummaries: new Map([[11, available], [12, passing]]) });
+  const tst = environment(data, 'TST');
+  assert.equal(tst.qa.state, 'recorded');
+  assert.equal(tst.qa.latest.id, 12);
+  assert.equal(tst.qa.latest.scope, 'environment');
+  assert.equal(tst.qa.latest.environment, 'TST');
+  assert.deepEqual(tst.qa.latest.summary, passing);
+  assert.equal(tst.qa.latest.startedAt, at(31));
+  assert.equal(tst.qa.latest.finishedAt, at(55));
+  assert.equal(tst.qa.latest.revisionVerified, false);
+  assert.equal('testedCommit' in tst.qa.latest, false);
+  assert.equal('commit' in tst.qa.latest, false);
+  assert.equal('version' in tst.qa.latest, false);
+  assert.equal(tst.lastSuccess.qa.latest.id, 11);
+  assert.equal(tst.lastSuccess.qa.latest.result, 'failed');
+  assert.deepEqual(data.runs.find(run => run.id === 1).qaLinks.map(run => run.id), [11]);
+  assert.equal(data.previousReleases[0].progress.find(item => item.environment === 'TST').lastSuccess.qa.latest.id, 11);
+});
+
+test('latest environment tests retain failed, cancelled, queued and running outcomes', () => {
+  for (const [status, result] of [['completed', 'failed'], ['completed', 'canceled'], ['inProgress', null], ['notStarted', null]]) {
+    const latest = child(12, 'DEV', { reason: 'manual', queueTime: at(30), status, result,
+      startTime: status === 'notStarted' ? null : at(31), finishTime: status === 'completed' ? at(55) : null });
+    const data = dashboard([parent(), child(), latest]);
+    const qa = environment(data).qa;
+    assert.equal(qa.latest.id, 12, status);
+    assert.equal(qa.latest.status, status);
+    assert.equal(qa.latest.result, result);
+    assert.equal(qa.latest.summary, null, 'An older result must not be borrowed');
+    assert.equal(environment(data).lastSuccess.qa.latest.id, 11);
+  }
+});
+
+test('fixed environment tests are visible without a deployment and cannot leak between environments', () => {
+  const data = dashboard([child(11, 'TST', { reason: 'schedule' }),
+    child(12, 'DEV', { reason: 'manual', queueTime: at(30) })], []);
+  assert.equal(environment(data, 'TST').lastSuccess, null);
+  assert.equal(environment(data, 'TST').qa.latest.id, 11);
+  assert.equal(environment(data).qa.latest.id, 12);
+  assert.equal(environment(data, 'PRE').qa.latest, null);
+  assert.equal(environment(data, 'PRD').qa.latest, null);
+  assert.equal(environment(data, 'PRE').qa.state, 'not-recorded');
+});
+
+test('environment tests use queue order and run ID ties instead of completion order or input order', () => {
+  const data = dashboard([
+    child(14, 'TST', { reason: 'schedule', queueTime: at(25), finishTime: at(59) }),
+    child(12, 'TST', { reason: 'manual', queueTime: at(30), finishTime: at(40) }),
+    child(13, 'TST', { reason: 'schedule', queueTime: at(30), finishTime: at(35) }),
+  ], []);
+  assert.equal(environment(data, 'TST').qa.latest.id, 13);
+  assert.equal(environment(data, 'TST').qa.latest.queuedAt, at(30));
+});
+
+test('unavailable environment summaries retain the run and missing dates stay unknown', () => {
+  const run = child(11, 'TST', { reason: 'schedule', queueTime: null, startTime: null, finishTime: null });
+  const data = dashboard([run], [], { qaSummaries: new Map([[11, { availability: 'unavailable' }]]) });
+  const qa = environment(data, 'TST').qa.latest;
+  assert.equal(qa.id, 11);
+  assert.equal(qa.result, 'succeeded');
+  assert.deepEqual(qa.summary, { availability: 'unavailable' });
+  assert.equal(qa.queuedAt, null);
+  assert.equal(qa.startedAt, null);
+  assert.equal(qa.finishedAt, null);
+});
+
 test('fixed QA environment cannot attach to another kind of deployment parent', () => {
   const data = dashboard([parent(), child(11, 'TST', { triggerInfo: child().triggerInfo })]);
   assert.equal(environment(data).lastSuccess.qa.state, 'not-linked');
@@ -167,15 +239,21 @@ test('legacy explicit TST queue evidence retains its result summary and environm
   const qa = environment(data, 'TST').lastSuccess.qa;
   assert.equal(qa.latest.id, 11);
   assert.deepEqual(qa.latest.summary, available);
+  assert.equal(environment(data, 'TST').qa.latest.id, 11);
+  assert.equal(environment(data, 'TST').qa.latest.scope, 'environment');
+  assert.deepEqual(environment(data, 'TST').qa.latest.summary, available);
 });
 
 test('legacy environment selector disagreement and unrelated queue ancestry stay unlinked', () => {
   const mismatch = dashboard([parent(1, 'TST'), legacyChild('DEV')], [[1, legacyDetail()]]);
   assert.equal(environment(mismatch, 'TST').lastSuccess.qa.state, 'not-linked');
+  assert.equal(environment(mismatch, 'TST').qa.latest, null);
+  assert.equal(environment(mismatch).qa.latest, null);
   const unrelated = legacyDetail();
   unrelated.timeline.records.find(record => record.id === 'legacy-stage').identifier = 'UnrelatedStage';
   const data = dashboard([parent(1, 'TST'), legacyChild()], [[1, unrelated]]);
   assert.equal(environment(data, 'TST').lastSuccess.qa.state, 'not-linked');
+  assert.equal(environment(data, 'TST').qa.latest, null);
   assert.equal(data.runs.find(run => run.id === 1).qaLinks.length, 1);
 });
 
@@ -193,4 +271,16 @@ test('a retained legacy queue record carries missing-run retention context besid
   assert.deepEqual(qa.availability, availability);
   assert.equal(qa.result, null);
   assert.equal(qa.summary, null);
+});
+
+test('unavailable environment history cannot present an older legacy result as the latest tests', () => {
+  for (const code of ['qa_pipeline_unavailable', 'qa_pipeline_conflict', 'qa_history_unavailable']) {
+    const data = dashboard([parent(1, 'TST'), legacyChild()], [[1, legacyDetail()]], {
+      warnings: [{ code, environment: 'TST', message: 'Synthetic unavailable history.' }],
+    });
+    const tst = environment(data, 'TST');
+    assert.equal(tst.qa.state, 'unavailable');
+    assert.equal(tst.qa.latest, null);
+    assert.equal(tst.lastSuccess.qa.latest.id, 11, 'Historical deployment evidence remains available');
+  }
 });
