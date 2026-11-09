@@ -6,6 +6,7 @@ import { createVulnerabilityService } from './vulnerability.mjs';
 import { createNamespaceClient, attachNamespaceChecks } from './kubernetes.mjs';
 import { attachNamespaceCreators } from './namespace-creator.mjs';
 import { createSecretHealthService } from './secret-health.mjs';
+import { readInfrastructureHistory } from './infrastructure-history.mjs';
 
 const INTERESTING_LOG = /Resolve namespace|^Create namespace$|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline|Publish namespace access URLs|Generate namespace URLs/i;
 
@@ -181,6 +182,7 @@ export function createDashboardService(config, client, { now = Date.now, namespa
     const dashboard = buildDashboard({ ...dashboardInput, qaSummaries });
     await vulnerabilities.attach(dashboard, builds);
     await secretHealth.attach(dashboard);
+    dashboard.infrastructure = await readInfrastructureHistory(config, client);
     await attachNamespaceChecks(dashboard, { enabled: config.kubernetes?.namespaceChecksEnabled === true, client: namespaceClient, now });
     attachNamespaceCreators(dashboard, { details, devRunIds: new Set(builds.filter(build => build._kind === 'dev').map(build => Number(build.id))) });
     limits.apiRequests = client.requests - callsBefore;

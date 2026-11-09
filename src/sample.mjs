@@ -1,5 +1,6 @@
 import { attachReleaseComparisons } from './release-comparison.mjs';
 import { deliveryMetrics } from './delivery.mjs';
+import { buildInfrastructureProgress } from './infrastructure-model.mjs';
 
 // Deliberate demonstration data, used only after an explicit sample-mode request.
 export function sampleDashboard() {
@@ -216,5 +217,27 @@ export function sampleDashboard() {
       version, commit: digit.repeat(40), outcome: 'created', observedAt: at(created), runId: id, url: url(id), evidence: evidence(id),
     })),
   });
+  const infraBuild = (id, tag, digit, hours, active = false) => ({
+    id, sourceBranch: `refs/tags/${tag}`, sourceVersion: digit.repeat(40), queueTime: at(hours),
+    status: active ? 'inProgress' : 'completed', result: active ? null : 'succeeded',
+  });
+  const infraStage = (identifier, state, hours) => ({
+    identifier, type: 'Stage', state, startTime: state === 'pending' ? null : at(hours + 1),
+    result: state === 'completed' ? 'succeeded' : null, finishTime: state === 'completed' ? at(hours) : null,
+  });
+  dashboard.infrastructure = buildInfrastructureProgress({ base: organization, project, limited: false,
+    devAvailability: 'available', devRuns: [], releaseRuns: [
+      { build: infraBuild(701, '1.1', 'a', 12, true), records: [
+        infraStage('TST_Complete', 'completed', 8), infraStage('GateToPRE', 'inProgress', 7),
+        infraStage('PRE_Complete', 'pending'), infraStage('PRD_Complete', 'pending'),
+      ] },
+      { build: infraBuild(700, '1', 'b', 150), records: [
+        infraStage('TST_Complete', 'completed', 147), infraStage('PRE_Complete', 'completed', 140),
+        infraStage('PRD_Complete', 'completed', 130),
+      ] },
+    ] });
+  dashboard.infrastructure.latestDev = {
+    commit: 'c'.repeat(40), at: at(3), runId: 702, runUrl: url(702), stage: 'PrivateLink',
+  };
   return dashboard;
 }

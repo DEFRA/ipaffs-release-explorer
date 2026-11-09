@@ -136,7 +136,7 @@ test('QA history read failures are local to QA and configured overrides bypass d
   assert.equal(data.environments[0].qa.latest, null);
   assert.equal(data.limits.pipelines.find(pipeline => pipeline.kind === 'qaDev').unavailable, true);
   assert.ok(data.warnings.some(warning => warning.code === 'qa_history_unavailable'));
-  assert.equal(source.calls.some(call => call.path === 'build/definitions'), false);
+  assert.equal(source.calls.some(call => call.path === 'build/definitions' && call.query.name.startsWith('Test ')), false);
 });
 
 test('overlapping QA pipeline overrides are rejected rather than guessing an environment', async () => {

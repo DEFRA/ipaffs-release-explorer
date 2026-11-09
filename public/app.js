@@ -354,6 +354,7 @@ function renderDashboard() {
   renderNamespaces();
   renderCoverage();
   renderReleases();
+  renderInfrastructure();
   renderDelivery();
   $('scan-window').textContent = scanDescription(data.limits, array(data.runs).length);
 }
@@ -590,7 +591,10 @@ function renderEnvironments() {
     } else {
       append(main, node('p', 'version-empty', 'No deployment found'), node('p', 'card-commit', 'Within scanned history'), badge('unknown'), node('p', 'deployment-time', 'No successful ADO record'));
     }
-    append(card, main, qaSummary({ environment: environment.name, qa: environment.qa }, { compact: true, scope: 'environment' }), vulnerabilitySummary(environment.vulnerability ?? deployment?.vulnerability, { compact: true }), secretHealthSummary(environment.secretHealth, environment.name));
+    append(card, main, infrastructureVersionSummary(state.data.infrastructure, environment.name),
+      qaSummary({ environment: environment.name, qa: environment.qa }, { compact: true, scope: 'environment' }),
+      vulnerabilitySummary(environment.vulnerability ?? deployment?.vulnerability, { compact: true }),
+      secretHealthSummary(environment.secretHealth, environment.name));
     const footer = node('div', 'card-footer');
     const latest = environment.latestAttempt;
     if (latest && (!deployment || latest.runId !== deployment.runId || latest.attempt !== deployment.attempt || normalizedStatus(recordStatus(latest)) !== 'succeeded')) {
@@ -764,6 +768,102 @@ function releaseProgress(release) {
     list.append(append(node('li'), control));
   });
   return append(node('div', 'release-progress-summary'), list, groupedReleaseComparisons(entries));
+}
+
+const infrastructurePromotion = ['TST', 'PRE', 'PRD'];
+
+function infrastructureVersionSummary(infrastructure, environment) {
+  const dev = environment === 'DEV';
+  const availability = dev ? infrastructure?.devLatestAvailability ?? infrastructure?.devAvailability : infrastructure?.availability;
+  const record = dev ? infrastructure?.latestDev : infrastructure?.latestSuccessful?.[environment];
+  const version = dev ? record?.commit && `main · ${shortCommit(record.commit)}` : record?.tag && `Tag ${record.tag}`;
+  const section = node('section', 'infrastructure-version-summary');
+  section.setAttribute('aria-label', `Infrastructure version for ${environment}`);
+  section.append(node('span', 'infrastructure-version-label', 'Infrastructure version'));
+  if (!version) {
+    const missing = dev && infrastructure?.devLatestLimited ? 'No verified apply in scan' : 'No version recorded';
+    section.append(node('p', 'infrastructure-version-missing', availability === 'available' ? missing : 'Unavailable'));
+    return section;
+  }
+  const identity = node('p', 'infrastructure-version-value', version);
+  if (record.commit) identity.title = record.commit;
+  return append(section, identity, infrastructureRecord(record, `Infrastructure deployment in ${environment}, ${version}`));
+}
+
+function infrastructureRecord(record, context, { earlier = false } = {}) {
+  if (!record) return null;
+  const time = record.at ? node('time', 'progress-time', date(record.at)) : null;
+  if (time) {
+    time.setAttribute('datetime', record.at);
+    time.title = date(record.at, true);
+  }
+  const run = record.runId ? `Run #${record.runId}` : 'ADO run';
+  const link = safeUrl(record.runUrl) ? externalLink(`${run} ↗`, record.runUrl, 'infrastructure-link') : null;
+  if (link) {
+    const stage = record.stage ? `, ${record.stage}` : '';
+    link.setAttribute('aria-label', `${context}, ${earlier ? 'earlier success, ' : ''}${run}${stage} (opens in a new tab)`);
+    if (record.stage) link.title = record.stage;
+  }
+  if (!earlier && !time && !link && !record.runId) return null;
+  return append(node('div', 'infrastructure-record'), earlier ? node('span', 'progress-prior', 'Earlier success') : null,
+    time, link || (record.runId ? node('span', 'progress-time', run) : null));
+}
+
+function infrastructureStep(environment, release) {
+  const record = release.environments?.[environment];
+  const status = normalizedStatus(record?.status);
+  const dev = environment === 'DEV';
+  const [label, tone] = {
+    succeeded: [dev ? 'Applied' : 'Deployed', 'success'], succeededwithissues: ['Succeeded with issues', 'warning'],
+    failed: ['Failed', 'danger'], canceled: ['Canceled', 'neutral'], running: [dev ? 'Applying' : 'Deploying', 'info'],
+    awaitingapproval: ['Awaiting approval', 'warning'], approvalfailed: ['Approval failed', 'danger'],
+    pending: ['Pending', 'neutral'], skipped: ['Skipped', 'neutral'], unavailable: ['Evidence unavailable', 'neutral'],
+    noevidence: [dev ? 'No matching apply recorded' : 'No evidence recorded', 'neutral'],
+  }[status] || ['Outcome unknown', 'neutral'];
+  const context = `Infrastructure tag ${release.tag}, ${environment}`;
+  return append(node('li'), append(node('div', `progress-step progress-${tone}`),
+    node('span', 'progress-environment', dev ? 'DEV · Main branch' : environment),
+    node('span', 'progress-label', label), infrastructureRecord(record, context),
+    status !== 'succeeded' ? infrastructureRecord(record?.successful, context, { earlier: true }) : null));
+}
+
+function renderInfrastructure() {
+  const data = state.data.infrastructure;
+  const container = $('infrastructure-content');
+  const releases = array(data?.releases);
+  container.replaceChildren();
+  if (data?.availability !== 'available') {
+    container.append(append(node('div', 'surface'), empty('Infrastructure release history unavailable', 'The infrastructure release pipeline history could not be read in this scan.')));
+    if (!releases.length) return;
+  }
+  if (!releases.length) {
+    container.append(append(node('div', 'surface'), empty('No infrastructure releases recorded', 'No tagged promotion runs were found in the scanned Azure DevOps history.')));
+    return;
+  }
+
+  const latest = node('ul', 'release-progress infrastructure-latest');
+  infrastructurePromotion.forEach((environment) => {
+    const record = data.latestSuccessful?.[environment];
+    latest.append(append(node('li'), append(node('div', `progress-step progress-${record ? 'success' : 'neutral'}`),
+      node('span', 'progress-environment', environment), node('span', 'progress-label', record ? `Tag ${record.tag}` : 'No success recorded'),
+      infrastructureRecord(record, `Latest recorded infrastructure deployment in ${environment}`))));
+  });
+  container.append(append(node('section', 'releases-section'),
+    append(node('div', 'section-heading'), node('h3', '', 'Latest successful tag by environment')), latest));
+
+  const list = node('div', 'release-list');
+  for (const release of releases) {
+    const commit = node('span', 'mono', release.commit ? `Commit ${shortCommit(release.commit)}` : 'Commit unknown');
+    if (release.commit) commit.title = release.commit;
+    const progress = node('ol', 'release-progress infrastructure-progress');
+    progress.setAttribute('aria-label', `Recorded progression for infrastructure tag ${release.tag}`);
+    for (const environment of ['DEV', ...infrastructurePromotion]) progress.append(infrastructureStep(environment, release));
+    list.append(append(node('article', 'release-group'), append(node('div', 'release-patch infrastructure-release'),
+      append(node('div', 'patch-heading'), node('h4', 'patch-version', `Tag ${release.tag}`), append(node('div', 'patch-meta'), commit)), progress)));
+  }
+  container.append(append(node('section', 'releases-section'), append(node('div', 'section-heading'), node('h3', '', 'Tag progression')),
+    data.devAvailability === 'unavailable' ? node('p', 'infrastructure-notice', 'DEV main-branch apply history is unavailable in this scan.') : null,
+    list, node('p', 'release-history-note', `${data.limited ? 'The scan limit was reached. Older runs may be missing. ' : ''}Statuses come from retained Azure DevOps apply and promotion runs.`)));
 }
 
 function duration(ms) {

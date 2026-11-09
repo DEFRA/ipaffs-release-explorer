@@ -182,6 +182,8 @@ configured project. Project Readers is the starting point; check any explicit
 pipeline/Environment permission overrides. It must be able to view:
 
 - the four configured pipelines, their runs, timelines and logs;
+- `Infrastructure Release Pipeline` in `Infrastructure/Releasing` and
+  `infrastructure` in `Infrastructure`, including runs and timelines;
 - the DEV/TST/PRE/PRD Environment records;
 - authenticated run details pages, used to verify abandoned status.
 
