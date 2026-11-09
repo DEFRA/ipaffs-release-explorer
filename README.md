@@ -99,6 +99,26 @@ observation or a complete audit archive. Deleted runs and older retry timelines
 that ADO no longer returns cannot be reconstructed. No new API calls, database,
 permissions or pipeline changes are needed for this view.
 
+## Infrastructure
+
+The **Infrastructure** tab tracks `ipaffs-infra` releases separately from
+application releases. It shows retained tag runs such as `1` and `1.1`, grouped
+by exact tag and commit. TST, PRE and PRD show the latest attempt, including
+approval waits, and retain earlier successful completion evidence. The summary
+shows each environment's most recent recorded tagged success. Links open the
+source evidence in Azure DevOps.
+
+DEV runs from `main`. Its column shows apply evidence for the exact commit behind
+the tag when that evidence is retained. Preview pipelines do not supply deployment
+status. A tag appears once its release pipeline run is visible in Azure DevOps.
+The scan uses the configured run limit per pipeline, so missing evidence can
+reflect retention or read access. The tab reports pipeline activity and does not
+check the live infrastructure version.
+
+The app discovers `Infrastructure Release Pipeline` in `Infrastructure/Releasing`
+and `infrastructure` in `Infrastructure` with its existing read-only Azure DevOps
+connection. The connection needs to be able to view both pipelines and their runs.
+
 ## What existing data can tell us
 
 | Information | Existing evidence | Limit |

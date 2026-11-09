@@ -41,3 +41,16 @@
   }
 }
 :root[data-theme=light]{color-scheme:light}:root[data-theme=dark]{color-scheme:dark}
+
+.infrastructure-latest{grid-template-columns:repeat(3,minmax(0,1fr))}
+.infrastructure-latest>li::after,.infrastructure-progress>li:first-child::after{display:none}
+.infrastructure-release{padding-top:20px}
+.infrastructure-release h4{margin:0}
+.infrastructure-record{display:flex;flex-wrap:wrap;align-items:baseline;column-gap:8px}
+.infrastructure-link{font-size:.75rem;font-weight:650;margin-top:6px}
+.infrastructure-notice{font-size:.8125rem;color:var(--muted);margin-bottom:12px}
+@media(max-width:760px){
+  .infrastructure-latest{gap:8px}
+  .infrastructure-progress>li::after{display:none}
+  .infrastructure-release{padding-top:16px}
+}
