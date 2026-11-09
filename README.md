@@ -50,10 +50,11 @@ Individual run evidence is accessible through environment and candidate details.
 
 ## Releases
 
-The **Releases** tab keeps current **Release candidates** at the top, grouped by
-major/minor version. **Previous releases** below shows release identities with a
-recorded successful PRD deployment; those identities no longer appear among the
-candidates. The latest recorded PRD version is marked in the history.
+The **Releases** tab starts with the same latest DEV and TST test results shown
+on **Overview**. Select an environment in a release row to inspect tests linked
+to that deployment. **Release candidates** are grouped by major/minor version.
+**Previous releases** lists release identities with a recorded successful PRD
+deployment. The latest recorded PRD version is marked in the history.
 
 Previous releases come directly from tagged release-run deployment evidence, so
 they do not depend on retained Create Release logs. Each row shows the latest
@@ -216,10 +217,10 @@ The failed run remains available through its evidence link. Failed runs with
 deployment records still contribute their actual results; missing history or
 access failures continue to produce warnings.
 
-Environment cards show **Latest tests** independently of the last recorded
-deployment. The newest queued run wins, including failed, canceled and active
-runs; an older passing result does not replace it. The cards show the run's
-finish date and time with the browser's timezone. Active runs show a labelled
+The Overview environment cards and the Releases test section show **Latest tests**
+independently of the last recorded deployment. The newest queued run wins,
+including failed, canceled and active runs. Both views show the run's finish date
+and time with the browser's timezone. Active runs show a labelled
 start or queue time; missing dates and unavailable history remain explicit.
 Published summaries are read for the latest environment runs and for existing
 deployment links, with each run fetched once per snapshot.

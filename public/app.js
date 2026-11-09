@@ -405,7 +405,7 @@ function qaRunTime(run) {
   return append(node('p', 'qa-run-meta'), node('span', '', `${label} `), timestamp);
 }
 
-function qaSummary(deployment, { compact = false, run = deployment?.qa?.latest, scope = 'deployment' } = {}) {
+function qaSummary(deployment, { compact = false, run = deployment?.qa?.latest, scope = 'deployment', label } = {}) {
   const environmentScope = scope === 'environment';
   const presentation = !run && environmentScope
     ? deployment?.qa?.state === 'unavailable'
@@ -415,7 +415,7 @@ function qaSummary(deployment, { compact = false, run = deployment?.qa?.latest, 
   const subject = `${deployment?.environment || run?.environment || 'this environment'}${!environmentScope && deployment?.version ? ` ${deployment.version}` : ''}`;
   const section = node('section', `qa-summary${compact ? ' qa-summary-compact' : ''}`);
   section.setAttribute('aria-label', `${environmentScope ? 'Latest test results' : 'Test results'} for ${subject}`);
-  const heading = append(node('div', 'qa-heading'), node('span', 'qa-label', environmentScope ? 'Latest tests' : 'Tests'));
+  const heading = append(node('div', 'qa-heading'), node('span', 'qa-label', label || (environmentScope ? 'Latest tests' : 'Tests')));
   if (run) heading.append(badge(recordStatus(run), presentation.tone));
   const metric = node('p', `qa-metric qa-${presentation.tone}`, presentation.label);
   if (presentation.denominator) metric.title = presentation.denominator;
@@ -669,6 +669,11 @@ function releaseIdentity(release) {
 }
 
 function renderReleases() {
+  const environments = array(state.data.environments);
+  $('release-environment-tests').replaceChildren(...['DEV', 'TST'].map(environment => {
+    const qa = environments.find(item => item.name === environment)?.qa;
+    return qaSummary({ environment, qa: qa ?? { state: 'unavailable' } }, { scope: 'environment', label: `${environment} latest tests` });
+  }));
   const container = $('release-list');
   const expanded = new Set([...container.querySelectorAll('.release-expander[open]')].map((item) => item.dataset.series));
   container.replaceChildren();
@@ -760,11 +765,6 @@ function releaseProgress(release) {
     } else if (release.history && record) control.append(node('span', 'progress-time', 'Completion time not recorded'));
     if (release.history && array(progress.deployments).length > 1) control.append(node('span', 'progress-prior', `${progress.deployments.length} deployments recorded`));
     if (!release.history && progress.lastSuccess && distinctAttempt(progress)) control.append(node('span', 'progress-prior', 'Earlier success recorded'));
-    const qa = record?.qa?.latest;
-    if (qa) {
-      const presentation = qaPresentation(qa);
-      control.append(node('span', `progress-qa qa-${presentation.tone}`, `Tests: ${presentation.label}`));
-    }
     list.append(append(node('li'), control));
   });
   return append(node('div', 'release-progress-summary'), list, groupedReleaseComparisons(entries));
@@ -1271,7 +1271,7 @@ function appendProgressDeployment(container, title, deployment, environment) {
     ...runTriggerFields(deployment),
     ['Started', deployment.startedAt ? date(deployment.startedAt, true) : 'Not started / not recorded'],
     ['Finished', deployment.finishedAt ? date(deployment.finishedAt, true) : 'Not finished / not recorded'],
-  ]), retryRequesterNote(deployment), qaSummary(deployment), vulnerabilitySummary(deployment.vulnerability), button('Inspect deployment record', 'button secondary', () => openDeployment(deployment, environment)));
+  ]), retryRequesterNote(deployment), qaSummary(deployment, { label: 'Linked tests' }), vulnerabilitySummary(deployment.vulnerability), button('Inspect deployment record', 'button secondary', () => openDeployment(deployment, environment)));
   container.append(section);
 }
 
