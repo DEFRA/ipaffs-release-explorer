@@ -114,19 +114,25 @@ function successfulApplyTask(records, byId, stage, name) {
   return matches.length === 1;
 }
 
-function devObservation({ build, records }, base, project) {
-  const stages = latestStages(records || []);
-  const applyStages = [...DEV_DEPLOYMENTS.keys()].map(name => stages.get(name));
-  const byId = new Map((records || []).filter(record => record?.id).map(record => [record.id, record]));
+export function successfulDevApplyStage({ build, records }, stages = latestStages(records || [])) {
   // Mirror the infrastructure preview's baseline evidence. DEV success alone
   // can describe a run that skipped apply steps or omitted Private Link.
-  if (build.status === 'completed' && build.result === 'succeeded' && byId.size === records?.length
-    && [...DEV_DEPLOYMENTS].every(([stage, task]) => successfulApplyTask(records, byId, stages.get(stage), task))) {
-    const stage = [...applyStages].reverse().sort((a, b) => finished(b) - finished(a))[0];
-    const successful = evidence(build, stage, base, project, stage.finishTime || null);
+  if (build.status !== 'completed' || build.result !== 'succeeded' || !records) return null;
+  const byId = new Map(records.filter(record => record?.id).map(record => [record.id, record]));
+  if (byId.size !== records.length
+    || ![...DEV_DEPLOYMENTS].every(([stage, task]) => successfulApplyTask(records, byId, stages.get(stage), task))) return null;
+  return [...DEV_DEPLOYMENTS.keys()].reverse().map(name => stages.get(name)).sort((a, b) => finished(b) - finished(a))[0];
+}
+
+function devObservation(run, base, project) {
+  const { build, records } = run;
+  const stages = latestStages(records || []);
+  const applied = successfulDevApplyStage(run, stages);
+  if (applied) {
+    const successful = evidence(build, applied, base, project, applied.finishTime || null);
     return { latest: { status: 'succeeded', ...successful }, successful: [successful] };
   }
-  const activity = stageActivity(applyStages.filter(Boolean));
+  const activity = stageActivity([...DEV_DEPLOYMENTS.keys()].map(name => stages.get(name)).filter(Boolean));
   return {
     latest: { status: activity?.status || noStageStatus(build, records), ...evidence(build, activity?.stage, base, project) },
     successful: [],
@@ -141,12 +147,16 @@ function combine(observations, fallback = 'noEvidence') {
 
 export function buildInfrastructureProgress({ releaseRuns, devRuns, base, project, limited = false, devAvailability = 'available' }) {
   const devByCommit = new Map();
+  let latestDev = null;
   for (const run of devRuns.filter(validRun).sort(byRunRecency)) {
     const commit = commitOf(run.build);
     if (!commit || run.build.sourceBranch !== 'refs/heads/main' || !Array.isArray(run.build.tags)
       || !run.build.tags.includes('Environment-DEV')) continue;
     if (!devByCommit.has(commit)) devByCommit.set(commit, []);
-    devByCommit.get(commit).push(devObservation(run, base, project));
+    const observation = devObservation(run, base, project);
+    devByCommit.get(commit).push(observation);
+    const [success] = observation.successful;
+    if (success && (!latestDev || bySuccessRecency(success, latestDev) < 0)) latestDev = { commit, ...success };
   }
 
   const releaseByIdentity = new Map();
@@ -172,5 +182,5 @@ export function buildInfrastructureProgress({ releaseRuns, devRuns, base, projec
     }
     return { tag, commit, environments };
   });
-  return { availability: 'available', devAvailability, limited, releases, latestSuccessful };
+  return { availability: 'available', devAvailability, limited, releases, latestSuccessful, latestDev };
 }

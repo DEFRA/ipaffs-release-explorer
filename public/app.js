@@ -591,7 +591,10 @@ function renderEnvironments() {
     } else {
       append(main, node('p', 'version-empty', 'No deployment found'), node('p', 'card-commit', 'Within scanned history'), badge('unknown'), node('p', 'deployment-time', 'No successful ADO record'));
     }
-    append(card, main, qaSummary({ environment: environment.name, qa: environment.qa }, { compact: true, scope: 'environment' }), vulnerabilitySummary(environment.vulnerability ?? deployment?.vulnerability, { compact: true }), secretHealthSummary(environment.secretHealth, environment.name));
+    append(card, main, infrastructureVersionSummary(state.data.infrastructure, environment.name),
+      qaSummary({ environment: environment.name, qa: environment.qa }, { compact: true, scope: 'environment' }),
+      vulnerabilitySummary(environment.vulnerability ?? deployment?.vulnerability, { compact: true }),
+      secretHealthSummary(environment.secretHealth, environment.name));
     const footer = node('div', 'card-footer');
     const latest = environment.latestAttempt;
     if (latest && (!deployment || latest.runId !== deployment.runId || latest.attempt !== deployment.attempt || normalizedStatus(recordStatus(latest)) !== 'succeeded')) {
@@ -768,6 +771,24 @@ function releaseProgress(release) {
 }
 
 const infrastructurePromotion = ['TST', 'PRE', 'PRD'];
+
+function infrastructureVersionSummary(infrastructure, environment) {
+  const dev = environment === 'DEV';
+  const availability = dev ? infrastructure?.devLatestAvailability ?? infrastructure?.devAvailability : infrastructure?.availability;
+  const record = dev ? infrastructure?.latestDev : infrastructure?.latestSuccessful?.[environment];
+  const version = dev ? record?.commit && `main · ${shortCommit(record.commit)}` : record?.tag && `Tag ${record.tag}`;
+  const section = node('section', 'infrastructure-version-summary');
+  section.setAttribute('aria-label', `Infrastructure version for ${environment}`);
+  section.append(node('span', 'infrastructure-version-label', 'Infrastructure version'));
+  if (!version) {
+    const missing = dev && infrastructure?.devLatestLimited ? 'No verified apply in scan' : 'No version recorded';
+    section.append(node('p', 'infrastructure-version-missing', availability === 'available' ? missing : 'Unavailable'));
+    return section;
+  }
+  const identity = node('p', 'infrastructure-version-value', version);
+  if (record.commit) identity.title = record.commit;
+  return append(section, identity, infrastructureRecord(record, `Infrastructure deployment in ${environment}, ${version}`));
+}
 
 function infrastructureRecord(record, context, { earlier = false } = {}) {
   if (!record) return null;

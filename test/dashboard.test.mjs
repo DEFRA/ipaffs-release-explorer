@@ -212,7 +212,7 @@ test('deployment requesters come from existing Build summaries and remain availa
   assert.deepEqual(data.namespaces[0].lastSuccess.trigger, { reason: 'manual', requestedBy: 'Example operator', requestedFor: 'Example operator' });
   assert.deepEqual(source.service.run(501).run.trigger, data.namespaces[0].lastSuccess.trigger);
   assert.doesNotMatch(JSON.stringify(data), /operator@example\.invalid/);
-  assert.equal(source.calls.filter(url => url.searchParams.get('name') !== 'Infrastructure Release Pipeline').length,
+  assert.equal(source.calls.filter(url => !['Infrastructure Release Pipeline', 'infrastructure'].includes(url.searchParams.get('name'))).length,
     6, 'Four application pipeline lists, one timeline and one environment list; no identity lookup');
   assertOnlyApiRequests(source.calls);
 });
@@ -342,7 +342,7 @@ test('previous releases use existing deployment requests and refresh when PRD co
   assert.equal(data.previousReleases[0].progress[3].lastSuccess.finishedAt, changedAt);
   assert.deepEqual(data.releases, []);
   assert.equal(source.service.run(501).stages[0].status, 'succeeded');
-  assert.equal(source.calls.filter(url => url.searchParams.get('name') !== 'Infrastructure Release Pipeline').length,
+  assert.equal(source.calls.filter(url => !['Infrastructure Release Pipeline', 'infrastructure'].includes(url.searchParams.get('name'))).length,
     12, 'Each application scan uses only four pipeline lists, one timeline and the existing environment list');
 });
 

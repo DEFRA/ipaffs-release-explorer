@@ -236,5 +236,8 @@ export function sampleDashboard() {
         infraStage('PRD_Complete', 'completed', 130),
       ] },
     ] });
+  dashboard.infrastructure.latestDev = {
+    commit: 'c'.repeat(40), at: at(3), runId: 702, runUrl: url(702), stage: 'PrivateLink',
+  };
   return dashboard;
 }

@@ -101,6 +101,11 @@ permissions or pipeline changes are needed for this view.
 
 ## Infrastructure
 
+The **Overview** cards show the latest recorded successful infrastructure version
+for each environment, with an Azure DevOps link and a completion time when recorded.
+TST, PRE and PRD show the last successful tagged promotion. DEV shows the `main`
+commit from the latest verified full infrastructure apply in the scan.
+
 The **Infrastructure** tab tracks `ipaffs-infra` releases separately from
 application releases. It shows retained tag runs such as `1` and `1.1`, grouped
 by exact tag and commit. TST, PRE and PRD show the latest attempt, including
