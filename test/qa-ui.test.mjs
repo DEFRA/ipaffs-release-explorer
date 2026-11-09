@@ -4,13 +4,18 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 class Element {
-  constructor(tag) { this.tagName = tag; this.children = []; this.attributes = {}; }
+  constructor(tag) { this.tagName = tag; this.children = []; this.attributes = {}; this.dataset = {}; }
   set textContent(value) { this.children = [String(value)]; }
   get textContent() { return this.children.map(child => typeof child === 'string' ? child : child.textContent).join(' '); }
   append(...children) { this.children.push(...children); }
   replaceChildren(...children) { this.children = children; }
   setAttribute(name, value) { this.attributes[name] = String(value); }
   addEventListener() {}
+  querySelectorAll(selector) {
+    assert.equal(selector, '.release-expander[open]');
+    return matching(this, 'release-expander').filter(element => element.open);
+  }
+  showModal() { this.open = true; }
 }
 
 const source = (await readFile(new URL('../public/app.js', import.meta.url), 'utf8'))
@@ -25,11 +30,11 @@ const formatted = value => new Intl.DateTimeFormat('en-GB', {
 const queuedAt = '2035-03-15T08:00:00Z';
 const startedAt = '2035-03-15T08:01:00Z';
 const finishedAt = '2035-03-15T08:30:00Z';
-const qaRun = (overrides = {}) => ({
-  id: 601, environment: 'TST', scope: 'environment', status: 'completed', result: 'succeeded',
+const qaRun = ({ id = 601, ...overrides } = {}) => ({
+  id, environment: 'TST', scope: 'environment', status: 'completed', result: 'succeeded',
   queuedAt, startedAt, finishedAt,
-  url: 'https://dev.azure.com/example/SAMPLE/_build/results?buildId=601',
-  resultsUrl: 'https://dev.azure.com/example/SAMPLE/_build/results?buildId=601&view=ms.vss-test-web.build-test-results-tab',
+  url: `https://dev.azure.com/example/SAMPLE/_build/results?buildId=${id}`,
+  resultsUrl: `https://dev.azure.com/example/SAMPLE/_build/results?buildId=${id}&view=ms.vss-test-web.build-test-results-tab`,
   summary: { availability: 'available', passed: 90, failed: 0, skipped: 10, other: 0, executed: 90, passPercentage: 100 },
   ...overrides,
 });
@@ -43,7 +48,7 @@ const environment = (overrides = {}) => ({
   qa: { state: 'recorded', latest: qaRun(), runs: [] }, ...overrides,
 });
 
-function renderer(environments = []) {
+function renderer(environments = [], releaseData = {}) {
   const elements = new Map();
   const context = vm.createContext({ URL, Intl, Node: Element, document: {
     createElement: tag => new Element(tag),
@@ -54,7 +59,7 @@ function renderer(environments = []) {
     },
   } });
   vm.runInContext(source, context);
-  context.data = { environments };
+  context.data = { environments, ...releaseData };
   vm.runInContext('state.data = data', context);
   return { context, elements };
 }
@@ -94,6 +99,60 @@ test('empty or unavailable environment tests never fall back to stale deployment
     assert.equal(links(section).length, 0);
     assert.equal(timestamps(section).length, 0);
   }
+});
+
+test('Releases shows the same latest DEV and TST runs as Overview, separate from release-linked QA', () => {
+  const record = deployment();
+  const progress = { environment: 'TST', status: 'deployed', lastSuccess: record };
+  const candidate = { version: record.version, progress: [progress] };
+  const previous = { ...candidate, version: '4.1.0', history: true, progress: [{ ...progress, lastSuccess: { ...record, version: '4.1.0' } }] };
+  const devRun = qaRun({ id: 602, environment: 'DEV', status: 'notStarted', result: null, startedAt: null, finishedAt: null, summary: null });
+  const dev = environment({ name: 'DEV', namespace: 'dev', lastSuccess: null, qa: { state: 'recorded', latest: devRun } });
+  const pre = environment({ name: 'PRE', namespace: 'pre', qa: { state: 'not-recorded', latest: null } });
+  const { context, elements } = renderer([environment(), pre, dev], { releases: [candidate], previousReleases: [previous] });
+
+  context.renderReleases();
+  context.renderEnvironments();
+
+  const summaries = matching(elements.get('release-environment-tests'), 'qa-summary');
+  assert.deepEqual(summaries.map(summary => summary.attributes['aria-label']), ['Latest test results for DEV', 'Latest test results for TST']);
+  const [devSummary, tstSummary] = summaries;
+  assert.match(devSummary.textContent, /DEV latest tests.*Tests queued.*Queued/);
+  assert.equal(timestamps(devSummary)[0].attributes.datetime, queuedAt);
+  assert.equal(links(devSummary)[0].href, devRun.url);
+  const overviewTst = matching(elements.get('environment-grid'), 'qa-summary')[0];
+  assert.match(tstSummary.textContent, /TST latest tests.*100% passed.*90 passed · 0 failed · 10 skipped/);
+  assert.equal(timestamps(tstSummary)[0].attributes.datetime, timestamps(overviewTst)[0].attributes.datetime);
+  assert.equal(links(tstSummary)[0].href, links(overviewTst)[0].href);
+  assert.doesNotMatch(tstSummary.textContent, /88\.9|4\.2\.0/);
+
+  for (const id of ['release-list', 'previous-release-list']) {
+    const list = elements.get(id);
+    assert.ok(matching(list, 'release-patch').length);
+    assert.doesNotMatch(list.textContent, /100%|88\.9%|Latest tests|Linked tests/);
+  }
+
+  context.openReleaseProgress(candidate, progress);
+  const detail = matching(elements.get('detail-content'), 'qa-summary')[0];
+  assert.match(detail.textContent, /Linked tests.*88\.9% passed/);
+  assert.doesNotMatch(detail.textContent, /Latest tests|100%/);
+  assert.equal(timestamps(detail)[0].attributes.datetime, record.qa.latest.finishedAt);
+  assert.equal(links(detail)[0].href, record.qa.latest.resultsUrl);
+});
+
+test('empty or unavailable latest tests in Releases do not fall back to linked QA', () => {
+  const dev = environment({ name: 'DEV', namespace: 'dev', lastSuccess: null, qa: { state: 'not-recorded', latest: null } });
+  const tst = environment({ qa: { state: 'unavailable', latest: null } });
+  const { context, elements } = renderer([dev, tst]);
+  context.renderReleases();
+
+  const container = elements.get('release-environment-tests');
+  const [devSummary, tstSummary] = matching(container, 'qa-summary');
+  assert.match(devSummary.textContent, /No tests recorded.*scanned history/);
+  assert.match(tstSummary.textContent, /Tests unavailable.*could not be loaded/);
+  assert.doesNotMatch(container.textContent, /88\.9|No linked tests/);
+  assert.equal(links(container).length, 0);
+  assert.equal(timestamps(container).length, 0);
 });
 
 test('running and queued runs show their own labelled start or queue time', () => {

@@ -49,6 +49,10 @@
         <section class="surface evidence-section"><div class="surface-heading"><div><h2>What the data can tell us</h2><p>Coverage and limits of existing pipeline evidence.</p></div></div><div id="coverage" class="coverage-grid"></div><div id="warnings" class="warnings"></div></section>
       </section>
       <section id="panel-releases" role="tabpanel" aria-labelledby="tab-releases" hidden>
+        <section class="releases-section" aria-labelledby="release-tests-heading">
+          <div class="section-heading"><div><h2 id="release-tests-heading">Latest environment tests</h2><p>These runs show current DEV and TST test results. For tests linked to a specific release deployment, select its environment below.</p></div></div>
+          <div id="release-environment-tests" class="release-environment-tests"></div>
+        </section>
         <section class="releases-section" aria-labelledby="release-candidates-heading">
           <div class="section-heading"><div><h2 id="release-candidates-heading">Release candidates</h2><p>Releases without a successful PRD deployment in the scanned history. Expand a series to inspect earlier patches; select an environment for its evidence.</p></div></div><div id="release-list" class="release-list"></div>
         </section>
