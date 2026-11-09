@@ -470,8 +470,24 @@ function vulnerabilityPresentation(scan) {
     distinct: distinct && `${count(distinct.critical)} critical · ${count(distinct.high)} high distinct CVEs`,
     tone: counts.critical || counts.high ? 'danger' : scanState === 'partial' || counts.medium || counts.low || counts.unknown ? 'warning' : 'success',
     label: `${count(counts.critical)} critical · ${count(counts.high)} high`,
+    // Each headline severity gets its own colour so a clean severity reads green beside one that is not.
+    // A partial scan can hide findings, so its zero counts stay amber rather than claim a clean result.
+    severities: ['critical', 'high'].map(severity => ({
+      text: `${count(counts[severity])} ${severity}`,
+      tone: counts[severity] ? 'danger' : scanState === 'complete' ? 'success' : 'warning',
+    })),
     detail: `${count(counts.medium)} medium · ${count(counts.low)} low · ${count(counts.unknown)} unknown severity`,
   };
+}
+
+function vulnerabilityMetric(presentation) {
+  if (!presentation.severities) return node('p', `vulnerability-metric vulnerability-${presentation.tone}`, presentation.label);
+  const metric = node('p', 'vulnerability-metric');
+  presentation.severities.forEach(({ text, tone }, index) => {
+    if (index) metric.append(node('span', 'vulnerability-separator', ' · '));
+    metric.append(node('span', `vulnerability-${tone}`, text));
+  });
+  return metric;
 }
 
 function vulnerabilitySummary(scan, { compact = false, release = false } = {}) {
@@ -488,7 +504,7 @@ function vulnerabilitySummary(scan, { compact = false, release = false } = {}) {
   if (!slim || scan?.state === 'partial') heading.append(node('span', `badge ${scanTone}`, presentation.status));
   const main = append(node('div', 'vulnerability-main'),
     heading,
-    node('p', `vulnerability-metric vulnerability-${presentation.tone}`, presentation.label));
+    vulnerabilityMetric(presentation));
   if (presentation.distinct) {
     const distinct = node('p', 'vulnerability-distinct', presentation.distinct);
     distinct.title = 'Each vulnerability ID is counted once, however many images or packages it affects.';
