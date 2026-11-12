@@ -465,16 +465,16 @@ function vulnerabilityPresentation(scan) {
   const count = value => new Intl.NumberFormat('en-GB').format(value);
   const distinct = scan.distinct && ['critical', 'high'].every(severity => Number.isSafeInteger(scan.distinct[severity])
     && scan.distinct[severity] >= 0 && scan.distinct[severity] <= counts[severity]) ? scan.distinct : null;
+  // A partial scan can miss findings, so its zero counts stay amber.
+  const zeroTone = scanState === 'complete' ? 'success' : 'warning';
   return {
     status, counts,
     distinct: distinct && `${count(distinct.critical)} critical · ${count(distinct.high)} high distinct CVEs`,
-    tone: counts.critical || counts.high ? 'danger' : scanState === 'partial' || counts.medium || counts.low || counts.unknown ? 'warning' : 'success',
+    tone: counts.critical ? 'danger' : scanState === 'partial' || counts.high || counts.medium || counts.low || counts.unknown ? 'warning' : 'success',
     label: `${count(counts.critical)} critical · ${count(counts.high)} high`,
-    // Each headline severity gets its own colour so a clean severity reads green beside one that is not.
-    // A partial scan can hide findings, so its zero counts stay amber rather than claim a clean result.
-    severities: ['critical', 'high'].map(severity => ({
+    severities: Object.entries({ critical: 'danger', high: 'warning' }).map(([severity, findingTone]) => ({
       text: `${count(counts[severity])} ${severity}`,
-      tone: counts[severity] ? 'danger' : scanState === 'complete' ? 'success' : 'warning',
+      tone: counts[severity] ? findingTone : zeroTone,
     })),
     detail: `${count(counts.medium)} medium · ${count(counts.low)} low · ${count(counts.unknown)} unknown severity`,
   };
