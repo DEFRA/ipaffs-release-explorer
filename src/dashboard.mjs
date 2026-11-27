@@ -1,4 +1,4 @@
-import { buildDashboard, successfulQaLinks } from './model.mjs';
+import { buildDashboard, QA_SOURCE_REF, successfulQaLinks } from './model.mjs';
 import { mapConcurrent } from './ado-client.mjs';
 import { normalizeRetentionPolicy, inferQaRetention } from './retention.mjs';
 import { normalizeTestSummary } from './qa-summary.mjs';
@@ -9,6 +9,7 @@ import { createSecretHealthService } from './secret-health.mjs';
 import { readInfrastructureHistory } from './infrastructure-history.mjs';
 
 const INTERESTING_LOG = /Resolve namespace|^Create namespace$|Set Namespace|Create release branch or next patch tag|Create release refs|Trigger QA pipeline|Publish namespace access URLs|Generate namespace URLs/i;
+const QA_KINDS = ['qa', 'qaDev', 'qaTst'];
 
 export function createDashboardService(config, client, { now = Date.now, namespaceClient = createNamespaceClient({ now }) } = {}) {
   let cached;
@@ -46,7 +47,9 @@ export function createDashboardService(config, client, { now = Date.now, namespa
       try {
         return {
           kind,
-          ...(await client.list('build/builds', { definitions: id, queryOrder: 'queueTimeDescending' }, config.runsPerPipeline)),
+          ...(await client.list('build/builds', { definitions: id, queryOrder: 'queueTimeDescending',
+            ...(QA_KINDS.includes(kind) ? { branchName: QA_SOURCE_REF } : {}),
+          }, config.runsPerPipeline)),
         };
       } catch (error) {
         if (!['qaDev', 'qaTst'].includes(kind)) throw error;
@@ -55,7 +58,7 @@ export function createDashboardService(config, client, { now = Date.now, namespa
       }
     }));
     const builds = lists.flatMap(list => list.items.map(build => ({ ...build, _kind: list.kind })));
-    const relevant = builds.filter(build => !['qa', 'qaDev', 'qaTst'].includes(build._kind));
+    const relevant = builds.filter(build => !QA_KINDS.includes(build._kind));
     const details = new Map();
     await mapConcurrent(relevant, 6, async build => {
       try {
@@ -98,13 +101,13 @@ export function createDashboardService(config, client, { now = Date.now, namespa
     const linkedQa = new Map();
     for (const detail of details.values()) {
       for (const { link } of successfulQaLinks(detail)) {
-        if (link.pipelineId !== config.pipelines.qa || builds.some(build => build.id === link.id)) continue;
+        if (link.pipelineId !== config.pipelines.qa || builds.some(build => Number(build.id) === link.id)) continue;
         if (!linkedQa.has(link.id)) linkedQa.set(link.id, []);
         linkedQa.get(link.id).push(link);
       }
     }
     const qaAvailability = new Map();
-    const scannedQaRuns = builds.filter(build => build.definition.id === config.pipelines.qa);
+    const scannedQaRuns = builds.filter(build => build.definition?.id === config.pipelines.qa && build.sourceBranch === QA_SOURCE_REF);
     // Optional policy lookup is shared within this scan, then refreshed with the
     // next snapshot. Failure leaves the existing unknown-result explanation intact.
     let retentionPromise;
@@ -116,9 +119,11 @@ export function createDashboardService(config, client, { now = Date.now, namespa
         if (child?.definition?.id !== config.pipelines.qa) throw new Error('Unexpected QA pipeline');
         builds.push({ ...child, _kind: 'qa' });
       } catch (error) {
+        const defaultBranchEvidence = evidence.filter(link => link.sourceRef === QA_SOURCE_REF);
+        if (!defaultBranchEvidence.length) return;
         if (error.code === 'ado_response_error' && error.status === 404) {
           const policy = await retentionPolicy();
-          const observations = evidence.map(link => inferQaRetention(link, policy, { now: now(), runs: scannedQaRuns }));
+          const observations = defaultBranchEvidence.map(link => inferQaRetention(link, policy, { now: now(), runs: scannedQaRuns }));
           // Conflicting or incomplete retained logs must not turn an unknown
           // result into a confident age classification.
           if (observations.length && observations.every(Boolean)) {
@@ -168,7 +173,7 @@ export function createDashboardService(config, client, { now = Date.now, namespa
     const linkedIds = new Set([...provisional.runs.flatMap(run => run.qaLinks.map(link => Number(link.id))),
       ...provisional.environments.flatMap(environment => environment.qa.latest ? [environment.qa.latest.id] : []),
     ]
-      .filter(id => builds.some(build => Number(build.id) === id && ['qa', 'qaDev', 'qaTst'].includes(build._kind))));
+      .filter(id => builds.some(build => Number(build.id) === id && QA_KINDS.includes(build._kind))));
     await mapConcurrent([...linkedIds], 4, async id => {
       try {
         const { data } = await client.get('test/ResultSummaryByBuild', { buildId: id, 'api-version': '7.1-preview.1' });

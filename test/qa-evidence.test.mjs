@@ -229,7 +229,9 @@ const legacyDetail = (environment = 'TST') => details(environment, { timeline: {
   { id: 'legacy-stage', type: 'Stage', identifier: 'TriggerQAAutomation', state: 'completed', result: 'succeeded' },
   { id: 'queue-task', type: 'Task', parentId: 'legacy-stage', name: 'Trigger QA pipeline', state: 'completed', result: 'succeeded',
     startTime: at(5), finishTime: at(7), log: { id: 29 } }] },
-  logs: [{ id: 29, recordName: 'Trigger QA pipeline', text: JSON.stringify({ id: 11, definition: { id: 105 }, queueTime: at(6) }) }],
+  logs: [{ id: 29, recordName: 'Trigger QA pipeline', text: JSON.stringify({
+    id: 11, definition: { id: 105 }, queueTime: at(6), sourceBranch: 'refs/heads/main',
+  }) }],
 });
 const legacyChild = (environment = 'TST') => child(11, environment, { _kind: 'qa', definition: { id: 105 }, reason: 'manual',
   templateParameters: { environmentName: environment }, triggerInfo: undefined });
