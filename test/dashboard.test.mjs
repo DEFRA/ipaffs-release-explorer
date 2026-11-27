@@ -18,6 +18,9 @@ const createRun = (overrides = {}) => ({
   status: 'completed', result: 'succeeded', lastChangedDate: changedAt,
   queueTime: changedAt, startTime: changedAt, finishTime: changedAt, ...overrides,
 });
+const createQaRun = (overrides = {}) => createRun({
+  id: 701, definition: { id: config.pipelines.qa, name: 'QA' }, sourceBranch: 'refs/heads/main', ...overrides,
+});
 
 function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelines = {}, logs = {}, qaEvidence = {}, retentionPolicy, now, devUrls = null, namespaceClient } = {}) {
   let runs = initialRuns;
@@ -64,7 +67,9 @@ function fixture(initialRuns = [createRun()], { versions = {}, linkedQa, timelin
       if (log) {
         assert.equal(url.searchParams.get('api-version'), '7.1');
         if (Object.hasOwn(logs, log[2])) return new Response(logs[log[2]]);
-        if (Number(log[2]) === 18) return new Response(JSON.stringify(qaEvidence[log[1]] || { id: linkedQa.id, definition: linkedQa.definition }));
+        if (Number(log[2]) === 18) return new Response(JSON.stringify(qaEvidence[log[1]] || {
+          id: linkedQa.id, definition: linkedQa.definition, sourceBranch: linkedQa.sourceBranch,
+        }));
         return new Response(`Created tag '${versions[log[1]] || '4.2.0'}' at ${sha}`);
       }
       if (path === 'distributedtask/environments') return Response.json({ value: [] });
@@ -271,7 +276,7 @@ test('unavailable timelines remain explicit and do not fabricate candidate evide
 
 test('linked QA summaries also retain abandonment instead of displaying their original result as current success', async () => {
   const source = fixture([createRun()], {
-    linkedQa: createRun({ id: 701, definition: { id: config.pipelines.qa, name: 'QA' }, status: 'abandoned', result: 'succeeded' }),
+    linkedQa: createQaRun({ status: 'abandoned', result: 'succeeded' }),
   });
   const data = await source.service.get();
   const link = data.runs.find(run => run.id === 501).qaLinks[0];
@@ -368,10 +373,11 @@ const retentionPolicy = {
   purgeRuns: { value: 60 }, purgePullRequestRuns: { value: 30 }, retainRunsPerProtectedBranch: { value: 2 },
 };
 const oldQaEvidence = (overrides = {}) => ({
-  id: 701, definition: { id: config.pipelines.qa }, createdDate: '2035-01-01T12:00:00Z', reason: 'manual', ...overrides,
+  id: 701, definition: { id: config.pipelines.qa }, sourceBranch: 'refs/heads/main',
+  createdDate: '2035-01-01T12:00:00Z', reason: 'manual', ...overrides,
 });
-const newerQaRuns = () => [702, 703].map(id => createRun({
-  id, definition: { id: config.pipelines.qa, name: 'QA' },
+const newerQaRuns = () => [702, 703].map(id => createQaRun({
+  id,
   queueTime: '2035-03-01T12:00:00Z', startTime: '2035-03-01T12:01:00Z', finishTime: '2035-03-01T12:02:00Z',
 }));
 const linkedRequestCount = source => source.calls.filter(url => /\/build\/builds\/701$/.test(url.pathname)).length;
@@ -422,6 +428,14 @@ test('a missing pull request QA run uses the project pull request retention dura
   assert.equal(availability.ageDays, 42);
 });
 
+test('an expired legacy QA run requires proof of its default branch to remain linked', async () => {
+  const source = missingQaFixture({ evidence: oldQaEvidence({ sourceBranch: undefined }) });
+  await source.service.get();
+  assert.equal(linkedRequestCount(source), 1);
+  assert.deepEqual(source.service.run(501).run.qaLinks, []);
+  assert.equal(retentionRequestCount(source), 0);
+});
+
 test('permission and transport failures never become retention notices', async () => {
   for (const status of [401, 403, 500, 'network']) {
     const source = missingQaFixture();
@@ -454,6 +468,7 @@ test('retention requires enough newer successful completed QA runs within the sc
     [first, { ...second, result: 'failed' }],
     [first, { ...second, finishTime: '2035-04-01T12:00:00Z' }],
     [first, { ...second, queueTime: '2034-12-01T12:00:00Z' }],
+    [first, { ...second, sourceBranch: 'refs/heads/feature/qa' }],
     [first, { ...second, definition: { id: config.pipelines.create } }],
   ]) {
     const source = missingQaFixture({ runs });
@@ -472,9 +487,9 @@ test('an unavailable project policy preserves the ordinary missing QA warning', 
   }
 });
 
-test('available QA results take precedence over age and never request retention policy', async () => {
-  const linkedQa = createRun({ id: 701, definition: { id: config.pipelines.qa, name: 'QA' }, result: 'failed' });
-  const source = missingQaFixture({ linkedQa });
+test('the fetched default-branch QA result can establish eligibility for an older queue log', async () => {
+  const linkedQa = createQaRun({ result: 'failed' });
+  const source = missingQaFixture({ linkedQa, evidence: oldQaEvidence({ sourceBranch: undefined }) });
   source.setFailure(null);
   const data = await source.service.get();
   const link = data.runs.find(run => run.id === 501).qaLinks[0];
@@ -483,6 +498,17 @@ test('available QA results take precedence over age and never request retention 
   assert.equal(link.availability, undefined);
   assert.equal(retentionRequestCount(source), 0);
   assert.equal(data.warnings.some(warning => warning.code.startsWith('qa_run_')), false);
+});
+
+test('the fetched legacy QA branch overrides a conflicting default-branch queue log', async () => {
+  const source = fixture([createRun()], {
+    qaEvidence: { 501: oldQaEvidence() },
+    linkedQa: createQaRun({ sourceBranch: 'refs/heads/feature/qa' }),
+  });
+  const data = await source.service.get();
+  assert.equal(linkedRequestCount(source), 1);
+  assert.deepEqual(data.runs.find(run => run.id === 501).qaLinks, []);
+  assert.equal(source.calls.some(url => url.pathname.endsWith('/test/ResultSummaryByBuild')), false);
 });
 
 test('failed QA trigger tasks and other pipeline IDs cannot supply retention evidence', async () => {

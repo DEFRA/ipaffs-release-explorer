@@ -5,6 +5,7 @@ import { deliveryMetrics } from './delivery.mjs';
 const VERSION = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)';
 const SHA = '(?:[a-fA-F0-9]{64}|[a-fA-F0-9]{40})';
 const CANONICAL = ['DEV', 'TST', 'PRE', 'PRD'];
+export const QA_SOURCE_REF = 'refs/heads/main';
 
 const time = value => Number.isFinite(Date.parse(value)) ? Date.parse(value) : 0;
 const fullVersion = value => typeof value === 'string' && new RegExp(`^${VERSION}$`).test(value) ? value : null;
@@ -98,8 +99,10 @@ export function parseQaRunEvidence(logText) {
             // Keep the child's own timestamps; parent deployment dates are not QA evidence.
             const queuedAt = data.queueTime ?? data.createdDate;
             const finishedAt = data.finishTime ?? data.finishedDate;
+            const sourceRef = data.sourceBranch ?? data.resources?.repositories?.self?.refName;
             if (typeof queuedAt === 'string') link.queuedAt = queuedAt;
             if (typeof finishedAt === 'string') link.finishedAt = finishedAt;
+            if (typeof sourceRef === 'string') link.sourceRef = sourceRef;
             if (typeof data.reason === 'string') link.reason = data.reason;
             if (typeof data.keepForever === 'boolean') link.keepForever = data.keepForever;
             if (typeof data.retainedByRelease === 'boolean') link.retainedByRelease = data.retainedByRelease;
@@ -408,7 +411,7 @@ function attachQaEvidence({ builds, runsById, kindById, deployments, getDetail, 
   for (const build of builds) {
     const environment = build._kind === 'qaDev' ? 'DEV' : build._kind === 'qaTst' ? 'TST' : null;
     const trigger = build.triggerInfo;
-    if (!environment || String(build.reason).toLowerCase() !== 'resourcetrigger'
+    if (!environment || build.sourceBranch !== QA_SOURCE_REF || String(build.reason).toLowerCase() !== 'resourcetrigger'
       || trigger?.alias !== 'deployment' || trigger?.pipelineTriggerType !== 'PipelineCompletion'
       || trigger?.artifactType !== 'Pipeline') continue;
     const parentId = Number(trigger.pipelineId);
@@ -441,9 +444,9 @@ function attachQaEvidence({ builds, runsById, kindById, deployments, getDetail, 
     if (!['dev', 'release'].includes(kind)) continue;
     const detail = getDetail(parent.id), records = detail?.timeline?.records || [];
     for (const { link: queued, log } of successfulQaLinks(detail)) {
-      const link = parent.qaLinks.find(item => item.id === queued.id);
+      const link = parent.qaLinks.find(item => item.id === queued.id && item.pipelineId === queued.pipelineId);
       const child = rawById.get(queued.id);
-      if (!link || (child && (child._kind !== 'qa' || Number(child.definition?.id) !== queued.pipelineId))) continue;
+      if (!link || (child && child._kind !== 'qa')) continue;
       const task = findLogRecord(log, records);
       const declared = child?.templateParameters?.environmentName;
       let environment;
@@ -472,7 +475,7 @@ function environmentQa(name, runs, kindById, deployments, qaSummaries, warnings)
     return { state: 'unavailable', latest: null, runs: [] };
   }
   const kind = { DEV: 'qaDev', TST: 'qaTst' }[name];
-  const fixed = kind ? runs.filter(run => kindById.get(run.id) === kind).map(run => ({
+  const fixed = kind ? runs.filter(run => kindById.get(run.id) === kind && run.sourceRef === QA_SOURCE_REF).map(run => ({
     id: run.id, pipelineId: run.pipelineId, status: run.status, result: run.result,
     abandonment: run.abandonment, queuedAt: run.queuedAt, startedAt: run.startedAt,
     finishedAt: run.finishedAt, url: run.url, resultsUrl: testResultsUrl(run.url),
@@ -527,7 +530,12 @@ export function buildDashboard({ builds = [], details = new Map(), environments 
     }
     for (const { link: child, log } of successfulQaLinks(detail)) {
       const childRun = runsById.get(child.id);
+      if (childRun && (kindById.get(child.id) !== 'qa' || childRun.pipelineId !== child.pipelineId)) continue;
+      // A retained queue response can establish the source ref after ADO removes the run.
+      const sourceRef = childRun ? childRun.sourceRef : child.sourceRef;
+      if (sourceRef !== QA_SOURCE_REF) continue;
       run.qaLinks.push({ ...child, status: childRun?.status || 'unknown', result: childRun?.result || null,
+        sourceRef,
         abandonment: childRun?.abandonment || null,
         queuedAt: childRun?.queuedAt || child.queuedAt || null, startedAt: childRun?.startedAt || null,
         finishedAt: childRun?.finishedAt || child.finishedAt || null,

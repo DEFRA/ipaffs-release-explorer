@@ -136,8 +136,8 @@ connection. The connection needs to be able to view both pipelines and their run
 | Previous releases and deployment dates | Successful PRD deployment, source tag and manifest commit, plus matching per-environment timelines | Limited to retained scanned runs and attempts; missing dates are not inferred. |
 | Approvals and progress | Native stage results, including incomplete release runs | Overall run status is not the result of every environment. |
 | Delivery metrics | Deployment stage outcomes and successful Create Release task logs | Pipeline outcomes only; incidents and commit times are not observed. |
-| Linked QA result | Child run ID in the existing QA trigger log, then the child's current ADO result | The request does not record the exact manifest revision tested. |
-| Latest environment tests | Latest queued run from the fixed DEV/TST QA pipelines, including scheduled and manual runs, or established deployment links | Environment results do not establish which release or manifest revision was tested. |
+| Linked QA result | QA run on `refs/heads/main` associated with a deployment through an ADO completion trigger or a retained QA queue log | The exact manifest revision tested remains unknown. |
+| Latest environment tests | Latest run on `refs/heads/main` by queue time, drawn from the fixed DEV/TST pipelines (including scheduled and manual runs) and linked runs | Environment results do not establish which release or manifest revision was tested. |
 | Failures and reruns | Timeline outcomes and attempts | Older attempts may not be retained; uncertainty is shown rather than guessed. |
 
 Each result includes an ADO link for inspection. The dashboard keeps the last

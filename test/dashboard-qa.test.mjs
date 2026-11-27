@@ -65,9 +65,29 @@ test('discovers separate QA pipelines and publishes native results on the matchi
   assert.match(qa.resultsUrl, /buildId=601&view=ms.vss-test-web.build-test-results-tab/);
   assert.equal(source.calls.filter(call => call.path === 'test/ResultSummaryByBuild').length, 1);
   assert.equal(source.calls.some(call => call.path.includes('/601/timeline')), false);
+  const buildQueries = source.calls.filter(call => call.path === 'build/builds').map(call => call.query);
+  assert.deepEqual(Object.fromEntries(buildQueries.map(query => [query.definitions, query.branchName])), {
+    101: undefined, 102: undefined, 103: undefined,
+    104: 'refs/heads/main', 105: 'refs/heads/main', 106: 'refs/heads/main',
+  });
   const count = source.calls.length;
   await source.service.get();
   assert.equal(source.calls.length, count, 'The dashboard cache also covers result lookups');
+});
+
+test('only default-branch QA runs match the environment or deployment even if ADO returns other refs', async () => {
+  const otherRuns = ['refs/heads/feature/qa', 'refs/pull/2/merge', 'refs/tags/main', null]
+    .map((sourceBranch, index) => ({ ...child, id: 602 + index, sourceBranch,
+      queueTime: '2035-01-02T09:12:00Z', finishTime: '2035-01-02T09:40:00Z' }));
+  const source = fixture({ buildsByPipeline: { 105: [...otherRuns, child] } });
+  const data = await source.service.get();
+  const dev = data.environments.find(env => env.name === 'DEV');
+  assert.equal(dev.qa.latest.id, 601);
+  assert.deepEqual(dev.qa.runs.map(run => run.id), [601]);
+  assert.equal(dev.lastSuccess.qa.latest.id, 601);
+  assert.deepEqual(dev.lastSuccess.qa.runs.map(run => run.id), [601]);
+  assert.deepEqual(data.runs.find(run => run.id === 501).qaLinks.map(run => run.id), [601]);
+  assert.deepEqual(source.calls.filter(call => call.path === 'test/ResultSummaryByBuild').map(call => call.query.buildId), ['601']);
 });
 
 test('manual and scheduled results appear for the environment without claiming selected resource deployment evidence', async () => {

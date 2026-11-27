@@ -427,34 +427,35 @@ test('QA child extraction handles timestamps and requires structured pipeline id
 
 test('linked passing QA remains explicitly unverified against the deployed revision', () => {
   const records = [{ id: 'qa-task', type: 'Task', name: 'Trigger QA pipeline', state: 'completed', result: 'succeeded', log: { id: 29 } }];
-  const data = model([build(1), build(2, { _kind: 'qa', definition: { id: 104, name: 'QA' } })], [[1, detail(records, [{ id: 29, recordName: 'Trigger QA pipeline', text: '{"id":2,"pipeline":{"id":104}}' }])]]);
+  const data = model([build(1), build(2, { _kind: 'qa', sourceBranch: 'refs/heads/main', definition: { id: 104, name: 'QA' } })], [[1, detail(records, [{ id: 29, recordName: 'Trigger QA pipeline', text: '{"id":2,"pipeline":{"id":104}}' }])]]);
   const linked = data.runs.find(run => run.id === 1).qaLinks[0];
   assert.equal(linked.result, 'succeeded');
   assert.equal(linked.revisionVerified, false);
   assert.equal('testedCommit' in linked, false);
 });
 
-test('QA evidence preserves the child timestamps and retention flags from both queue response formats', () => {
-  for (const timestamps of [
-    { createdDate: at(1), finishedDate: at(2) },
-    { queueTime: at(1), finishTime: at(2) },
+test('QA evidence preserves the child branch, timestamps and retention flags from both queue response formats', () => {
+  for (const response of [
+    { createdDate: at(1), finishedDate: at(2), resources: { repositories: { self: { refName: 'refs/heads/main' } } } },
+    { queueTime: at(1), finishTime: at(2), sourceBranch: 'refs/heads/main' },
   ]) {
     assert.deepEqual(parseQaRunEvidence(JSON.stringify({
-      id: 503, pipeline: { id: 104 }, ...timestamps, reason: 'manual', keepForever: true, retainedByRelease: false,
-    })), { id: 503, pipelineId: 104, queuedAt: at(1), finishedAt: at(2), reason: 'manual', keepForever: true, retainedByRelease: false });
+      id: 503, pipeline: { id: 104 }, ...response, reason: 'manual', keepForever: true, retainedByRelease: false,
+    })), { id: 503, pipelineId: 104, queuedAt: at(1), finishedAt: at(2), sourceRef: 'refs/heads/main',
+      reason: 'manual', keepForever: true, retainedByRelease: false });
   }
 });
 
 test('QA availability is separate from results and cannot replace an available child outcome', () => {
   const record = { id: 'qa-task', type: 'Task', name: 'Trigger QA pipeline', state: 'completed', result: 'succeeded', log: { id: 29 } };
-  const entries = [[1, detail([record], [{ id: 29, recordName: 'Trigger QA pipeline', text: '{"id":2,"pipeline":{"id":104}}' }])]];
+  const entries = [[1, detail([record], [{ id: 29, recordName: 'Trigger QA pipeline', text: '{"id":2,"pipeline":{"id":104},"sourceBranch":"refs/heads/main"}' }])]];
   const availability = { status: 'past-retention', label: 'Likely past retention window', detail: 'Synthetic retention context.' };
   const extra = { qaAvailability: new Map([[2, availability]]) };
   const missing = model([build(1)], entries, extra).runs.find(run => run.id === 1).qaLinks[0];
   assert.deepEqual(missing.availability, availability);
   assert.equal(missing.result, null);
   assert.equal(missing.revisionVerified, false);
-  const present = model([build(1), build(2, { _kind: 'qa', definition: { id: 104, name: 'QA' }, result: 'failed' })], entries, extra).runs.find(run => run.id === 1).qaLinks[0];
+  const present = model([build(1), build(2, { _kind: 'qa', sourceBranch: 'refs/heads/main', definition: { id: 104, name: 'QA' }, result: 'failed' })], entries, extra).runs.find(run => run.id === 1).qaLinks[0];
   assert.equal(present.result, 'failed');
   assert.equal(present.availability, undefined);
 });
